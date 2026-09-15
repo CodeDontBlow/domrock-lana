@@ -40,6 +40,10 @@ source venv/bin/activate
 
 python -m pip install -r requirements.txt
 
-#localhost:8000
-uvicorn main:app --reload         
+# localhost:8000
+uvicorn main:app --reload  
+
+# acessar Swagger UI
+http://localhost:8000/docs
+
 ```
