@@ -13,5 +13,5 @@ app = FastAPI()
 def get_app_info(settings: Settings = Depends(get_settings)):
     return {
         "database_url": settings.DATABASE_URL,
-        "app_port": settings.APP_PORT
+        "port": settings.PORT
     }
