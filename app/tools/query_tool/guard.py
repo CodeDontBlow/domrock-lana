@@ -37,7 +37,7 @@ def validar(sql: str) -> str:
     cte_names = {cte.alias_or_name.lower() for cte in arvore_sql.find_all(exp.CTE)}
     tabelas_usadas = {t.name.lower() for t in arvore_sql.find_all(exp.Table)}
     fora_da_lista = tabelas_usadas - TABELAS_PERMITIDAS - cte_names
-        raise SqlInseguro(f"Tabela não autorizada: {fora_da_lista}")
+    raise SqlInseguro(f"Tabela não autorizada: {fora_da_lista}")
 
     # Gera novamente o SQL a partir da árvore, em formato SQLite normalizado.
     return arvore_sql.sql(dialect="sqlite")
