@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str
     OPENROUTER_API_KEY: str | None = None
     PORT: int = 8000
-    DATABASE_SQLITE_URL: str = "vendas.db"
+    DATABASE_SQLITE_URL: str = "vendas_fake.db"
     # BACKEND_URL: str = "http://localhost:8080"
     # DATABASE_URL: str = ""
 
