@@ -44,7 +44,7 @@ Front (Vue) ──► Backend (Spring) ──► Lana ──► PostgreSQL (pape
 
 > O `.proto` é o contrato comum: o Java gera o stub cliente (`IAServiceGrpc`) e o Python gera o servicer (`ia_service_pb2_grpc`).
 
-Leia mais em: [domrock-backend/docs/arquitetura-comunicacao.md](https://github.com/codedontblow-org/domrock-backend/tree/docs/atualizando-documentacao-gRPC/docs)
+Leia mais em: [domrock-backend/docs/arquitetura-comunicacao.md](https://github.com/codedontblow/domrock-backend/tree/docs/atualizando-documentacao-gRPC/docs)
 
 ---
 
@@ -131,7 +131,7 @@ Erros que o backend precisa tratar:
 ### Pré-requisitos
 
 - Python 3.12 (ou 3.13)
-- O PostgreSQL do backend no ar, com as migrações aplicadas. Quem cria as tabelas e o papel `lana_leitura` é o backend, ao subir pela primeira vez (veja o [README do backend](https://github.com/codedontblow-org/domrock-backend)).
+- O PostgreSQL do backend no ar, com as migrações aplicadas. Quem cria as tabelas e o papel `lana_leitura` é o backend, ao subir pela primeira vez (veja o [README do backend](https://github.com/codedontblow/domrock-backend)).
 - Uma chave de API de pelo menos um provedor de IA
 - As portas 8000 e 50051 livres
 
@@ -182,7 +182,7 @@ Dentro do container, `localhost` é o próprio container: por isso o `DATABASE_U
 
 ### Sistema completo
 
-Para subir banco, backend, Lana e front de uma vez, use o [repositório principal](https://github.com/codedontblow-org/domrock-camplana).
+Para subir banco, backend, Lana e front de uma vez, use o [repositório principal](https://github.com/codedontblow/domrock-camplana).
 
 ---
 
