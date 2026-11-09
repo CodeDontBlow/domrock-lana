@@ -73,3 +73,13 @@ US 21 (comissão de R$ 3.100 sem proporção, admissão em 10/10), fora do perí
 - `regra` vale `5a`, `5b`, `5c`, `5d`, `5e`, `5f`, `5g` ou `piso`. A entrada `piso` diz qual dos
   dois valores venceu, calculado sobre a comissão com campanha.
 - O campo não vai para a LLM (`CAMPOS_EXPLICACAO`).
+
+## Contagens (`regras_base_aplicadas` e `pessoas_no_piso`, previstos no contrato 2.3)
+
+- `regras_base_aplicadas`: matrículas distintas por regra, na comissão atual, só as regras com
+  alguém. Códigos `5c`, `5d`, `5e_5f` (afastamento, inclui licença-maternidade) e `5g`. Em
+  nov/2025: `[{"regra": "5c", "descricao": "Admissão no mês", "pessoas": 15}]`. São 18
+  admitidos em novembro na tabela `funcionario`, mas 3 não têm loja e cargo nesse mês e por isso
+  não entram no RH da apuração.
+- `pessoas_no_piso`: matrículas cuja comissão atual ficou no fixo de R$ 3.500
+  (`app/simulacao/regras_aplicadas.py`).

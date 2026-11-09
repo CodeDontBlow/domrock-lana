@@ -118,6 +118,14 @@ class ApuracaoPessoa(BaseModel):
     comissao_com_campanha: float # final, com 5c a 5g
 
 
+class RegraBaseAplicada(BaseModel):
+    """Quantas pessoas caíram numa regra de 5c a 5g na comissão atual (contrato 2.3)."""
+
+    regra: str  # "5c", "5d", "5e_5f" (afastamento, inclui licença-maternidade) ou "5g"
+    descricao: str
+    pessoas: int
+
+
 class ResultadoSimulacao(BaseModel):
     rule_id: str
     competencias: list[str]
@@ -142,3 +150,5 @@ class ResultadoSimulacao(BaseModel):
     conflitos: list[ConflitoCampanha] = Field(default_factory=list)
     trilha: TrilhaSimulacao = Field(default_factory=TrilhaSimulacao)
     apuracao_por_pessoa: list[ApuracaoPessoa] = Field(default_factory=list)
+    regras_base_aplicadas: list[RegraBaseAplicada] = Field(default_factory=list)
+    pessoas_no_piso: int = 0

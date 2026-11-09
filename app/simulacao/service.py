@@ -9,6 +9,7 @@ from app.core.config import get_settings
 from app.simulacao.assercoes import AssercaoViolada, conferir_contra_referencia, conferir_resultado
 from app.simulacao.bases import BasesSimulacao, FonteBases, competencias_do_periodo
 from app.simulacao.por_pessoa import montar_apuracao_por_pessoa
+from app.simulacao.regras_aplicadas import contar_pessoas_no_piso, contar_regras_aplicadas
 from app.simulacao.regras_base import aplicar_ajustes, calcular_ajustes
 from app.simulacao.vigencia import (
     CampanhaContexto, calcular_baseline_vigente, calcular_periodos, detectar_conflitos, fontes_da_vigente,
@@ -167,6 +168,7 @@ class SimuladorCampanha:
         por_marca = quebrar_por(comparacao, "cod_marca")
         meta = avaliar_meta(bases.vendas, parametros)
         custo_com = self._custo_com(contexto, bases, baseline)
+        ajustes = calcular_ajustes(bases.rh, bases.intercorrencias)
         resultado = ResultadoSimulacao(
             rule_id=rule_id, competencias=contexto.competencias, totais=totais,
             por_marca=por_marca, por_cargo=quebrar_por(comparacao, "cod_cargo"),
@@ -175,9 +177,9 @@ class SimuladorCampanha:
             cenarios=propor_cenarios(parametros, totais.diferenca, orcamento, por_marca, custo_com),
             ressalvas=RESSALVAS, codigo=aprovada.codigo.fonte, origem_codigo=aprovada.codigo.origem,
             tentativas=aprovada.numero, explicacao="", observacao=aprovada.observacao,
-            apuracao_por_pessoa=montar_apuracao_por_pessoa(
-                comparacao, calcular_ajustes(bases.rh, bases.intercorrencias)
-            ),
+            apuracao_por_pessoa=montar_apuracao_por_pessoa(comparacao, ajustes),
+            regras_base_aplicadas=contar_regras_aplicadas(ajustes),
+            pessoas_no_piso=contar_pessoas_no_piso(comparacao, ajustes),
         )
         resumo = resultado.model_dump(include=CAMPOS_EXPLICACAO)
         return resultado.model_copy(update={"explicacao": self._explicador.explicar(resumo)})
@@ -216,8 +218,9 @@ def _amostra_vendas(vendas: pd.DataFrame) -> pd.DataFrame:
 
 def _aplicar_regras_base(comparacao: pd.DataFrame, bases: BasesSimulacao) -> pd.DataFrame:
     ajustes = calcular_ajustes(bases.rh, bases.intercorrencias)
-    bruta = comparacao["comissao_simulada"]
     ajustada = aplicar_ajustes(comparacao, ajustes, ["comissao", "comissao_simulada"])
-    ajustada["comissao_simulada_bruta"] = bruta
+    # As brutas (só 5a/5b) servem para dizer se o piso venceu: por_pessoa e regras_aplicadas.
+    ajustada["comissao_bruta"] = comparacao["comissao"]
+    ajustada["comissao_simulada_bruta"] = comparacao["comissao_simulada"]
     ajustada["diferenca"] = (ajustada["comissao_simulada"] - ajustada["comissao"]).round(2)
     return ajustada

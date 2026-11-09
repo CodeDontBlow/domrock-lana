@@ -71,6 +71,8 @@ def test_simular_com_admissao_no_mes_aplica_proporcao_e_detalha_5c() -> None:
     # A trilha somava o baseline bruto (só 5a/5b) e divergia dos totais.
     passo = next(p for p in resultado.trilha.passos if p.ferramenta == "comissao_atual")
     assert "R$ 61,00" in passo.descricao
+    assert [(r.regra, r.pessoas) for r in resultado.regras_base_aplicadas] == [("5c", 1)]
+    assert resultado.pessoas_no_piso == 0
 
 
 def test_simular_com_afastamento_leva_ao_piso_com_diferenca_zero() -> None:
@@ -88,6 +90,8 @@ def test_simular_com_afastamento_leva_ao_piso_com_diferenca_zero() -> None:
 
     piso = next(r for r in pessoa_m1.detalhamento if r.regra == "piso")
     assert piso.descricao == "piso — recebe o fixo de R$ 3.500,00 (a comissão daria R$ 52,50)"
+    assert [(r.regra, r.pessoas) for r in resultado.regras_base_aplicadas] == [("5e_5f", 1)]
+    assert resultado.pessoas_no_piso == 1
 
     _conferir_soma_por_pessoa(resultado)
 
