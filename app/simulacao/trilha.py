@@ -95,7 +95,8 @@ def _carregar_bases(execucao: ExecucaoSimulada) -> PassoTrilha:
 
 
 def _comissao_atual(execucao: ExecucaoSimulada) -> PassoTrilha:
-    total = float(execucao.baseline["comissao"].sum())
+    # Os totais já passaram pelas regras 5c a 5g (A6-77); o baseline bruto só tem 5a/5b.
+    total = execucao.totais.baseline
     return PassoTrilha(
         ordem=2, ferramenta="comissao_atual", descricao=f"Comissão atual (regras 5a a 5g): {formatar_reais(total)}",
         competencias=execucao.competencias, registros_retornados=len(execucao.baseline),

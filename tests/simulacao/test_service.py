@@ -1,11 +1,14 @@
 import pytest
 
+from app.simulacao.bases import BasesSimulacao
+from app.simulacao.dtos import ResultadoSimulacao
 from app.simulacao.service import SimulacaoFalhouError, SimuladorCampanha
 from app.tools.code_tool.gerador import GeradorCodigoModelo
 from app.tools.code_tool.runner import SubprocessRunner
 from app.tools.regra_tool.parametros import RegraInvalidaError, montar_regra
 from tests.fakes import (
-    FakeExplicador, FakeFonteBases, FakeGeradorLlmIndisponivel, FakeGeradorSequencial, bases_pequenas, fonte_modelo,
+    FakeExplicador, FakeFonteBases, FakeGeradorLlmIndisponivel, FakeGeradorSequencial,
+    bases_com_admissao_no_mes, bases_com_afastamento_piso, bases_pequenas, fonte_modelo,
     parametros_black_friday,
 )
 
@@ -17,8 +20,19 @@ VALORES = {
 CODIGO_QUEBRADO = "def aplicar_regra(bases, apuracao_base, competencias):\n    raise ValueError('bug')\n"
 
 
-def _simulador(gerador: FakeGeradorSequencial | FakeGeradorLlmIndisponivel) -> SimuladorCampanha:
-    return SimuladorCampanha(FakeFonteBases(bases_pequenas()), gerador, SubprocessRunner(), FakeExplicador())
+def _simulador(
+    gerador: FakeGeradorSequencial | FakeGeradorLlmIndisponivel,
+    bases: BasesSimulacao | None = None,
+) -> SimuladorCampanha:
+    return SimuladorCampanha(FakeFonteBases(bases or bases_pequenas()), gerador, SubprocessRunner(), FakeExplicador())
+
+
+def _conferir_soma_por_pessoa(resultado: ResultadoSimulacao) -> None:
+    """A tela "Quanto cada pessoa recebe" (A6-109) precisa somar o mesmo que os totais."""
+    atual = sum(p.comissao_atual for p in resultado.apuracao_por_pessoa)
+    com_campanha = sum(p.comissao_com_campanha for p in resultado.apuracao_por_pessoa)
+    assert atual == pytest.approx(resultado.totais.baseline, abs=0.01)
+    assert com_campanha == pytest.approx(resultado.totais.simulado, abs=0.01)
 
 
 def test_simular_black_friday_calcula_totais_orcamento_e_meta() -> None:
@@ -33,6 +47,49 @@ def test_simular_black_friday_calcula_totais_orcamento_e_meta() -> None:
     assert resultado.tentativas == 1 and resultado.explicacao == "explicação fake"
     assert resultado.impacto.pessoas_impactadas == 2 and resultado.maiores_lojas[0].codigo == "2"
     assert resultado.ressalvas
+    _conferir_soma_por_pessoa(resultado)
+
+
+def test_simular_com_admissao_no_mes_aplica_proporcao_e_detalha_5c() -> None:
+    gerador = FakeGeradorSequencial([fonte_modelo(parametros_black_friday())])
+    simulador = _simulador(gerador, bases=bases_com_admissao_no_mes())
+
+    resultado = simulador.simular(montar_regra(VALORES, "bf", "draft-1"))
+
+    # M1 admitido em 10/11 (20/30): base 30 * 2/3 = 20.0, simulado 35 * 2/3 = 23.33;
+    # G1: 17.0 nos dois; M2: 24.0 e 32.0. Totais: base 61.0, simulado 72.33, dif 11.33.
+    assert resultado.totais.baseline == 61.0
+    assert resultado.totais.simulado == 72.33
+    assert resultado.totais.diferenca == 11.33
+
+    _conferir_soma_por_pessoa(resultado)
+
+    pessoa_m1 = next(p for p in resultado.apuracao_por_pessoa if p.matricula == "M1")
+    assert pessoa_m1.comissao_atual == 20.0
+    assert pessoa_m1.comissao_com_campanha == 23.33
+    assert any("5c — admissão em 10/11: 20 de 30 dias" in r.descricao for r in pessoa_m1.detalhamento)
+    # A trilha somava o baseline bruto (só 5a/5b) e divergia dos totais.
+    passo = next(p for p in resultado.trilha.passos if p.ferramenta == "comissao_atual")
+    assert "R$ 61,00" in passo.descricao
+
+
+def test_simular_com_afastamento_leva_ao_piso_com_diferenca_zero() -> None:
+    gerador = FakeGeradorSequencial([fonte_modelo(parametros_black_friday())])
+    simulador = _simulador(gerador, bases=bases_com_afastamento_piso())
+
+    resultado = simulador.simular(montar_regra(VALORES, "bf", "draft-1"))
+
+    # M1 tem afastamento 5e (fator 1.5): base 30 * 1.5 = 45 -> piso 3500;
+    # simulado 35 * 1.5 = 52.5 -> piso 3500; diferença de M1 é zero.
+    pessoa_m1 = next(p for p in resultado.apuracao_por_pessoa if p.matricula == "M1")
+    assert pessoa_m1.comissao_atual == 3500.0
+    assert pessoa_m1.comissao_com_campanha == 3500.0
+    assert (pessoa_m1.comissao_com_campanha - pessoa_m1.comissao_atual) == 0.0
+
+    piso = next(r for r in pessoa_m1.detalhamento if r.regra == "piso")
+    assert piso.descricao == "piso — recebe o fixo de R$ 3.500,00 (a comissão daria R$ 52,50)"
+
+    _conferir_soma_por_pessoa(resultado)
 
 
 def test_simular_sem_orcamento_traz_meta_retorno_e_nenhum_veredito() -> None:

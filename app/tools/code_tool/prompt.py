@@ -46,6 +46,7 @@ Convenções dos dados (errar isto gera número errado sem erro):
   vendas da loja (de todos os cargos) na janela; NUNCA filtre as vendas por cod_cargo antes
   dessa soma. Os cargos-alvo filtram quem RECEBE, não quais vendas contam para o gerente.
 - Não recalcule o baseline. Parta de apuracao_base e some o efeito da regra.
+- As regras 5c a 5g (admissão, demissão, férias, afastamento e piso de R$ 3.500) são aplicadas depois do seu código; NÃO as aplique.
 - Arredonde cada delta com round(…, 2). Comissão nunca pode ficar negativa.
 """
 

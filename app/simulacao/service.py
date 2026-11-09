@@ -8,6 +8,8 @@ import pandas as pd
 from app.core.config import get_settings
 from app.simulacao.assercoes import AssercaoViolada, conferir_contra_referencia, conferir_resultado
 from app.simulacao.bases import BasesSimulacao, FonteBases, competencias_do_periodo
+from app.simulacao.por_pessoa import montar_apuracao_por_pessoa
+from app.simulacao.regras_base import aplicar_ajustes, calcular_ajustes
 from app.simulacao.vigencia import (
     CampanhaContexto, calcular_baseline_vigente, calcular_periodos, detectar_conflitos, fontes_da_vigente,
 )
@@ -152,7 +154,8 @@ class SimuladorCampanha:
         execucao = self._runner.executar(codigo.fonte, bases.como_dict(), baseline, contexto.competencias)
         if not execucao.ok or execucao.apuracao_simulada is None or execucao.contribuicoes is None:
             raise ExecucaoFalhouError(f"{execucao.status}: {execucao.mensagem}")
-        return conferir_resultado(baseline, execucao.apuracao_simulada, execucao.contribuicoes, contexto.parametros)
+        comparacao = conferir_resultado(baseline, execucao.apuracao_simulada, execucao.contribuicoes, contexto.parametros)
+        return _aplicar_regras_base(comparacao, bases)
 
     def _resumir(
         self, rule_id: str, contexto: ContextoGeracao, bases: BasesSimulacao,
@@ -172,6 +175,9 @@ class SimuladorCampanha:
             cenarios=propor_cenarios(parametros, totais.diferenca, orcamento, por_marca, custo_com),
             ressalvas=RESSALVAS, codigo=aprovada.codigo.fonte, origem_codigo=aprovada.codigo.origem,
             tentativas=aprovada.numero, explicacao="", observacao=aprovada.observacao,
+            apuracao_por_pessoa=montar_apuracao_por_pessoa(
+                comparacao, calcular_ajustes(bases.rh, bases.intercorrencias)
+            ),
         )
         resumo = resultado.model_dump(include=CAMPOS_EXPLICACAO)
         return resultado.model_copy(update={"explicacao": self._explicador.explicar(resumo)})
@@ -206,3 +212,12 @@ def _amostra_vendas(vendas: pd.DataFrame) -> pd.DataFrame:
     ordenadas = vendas.sort_values("data_venda")
     metade = LINHAS_AMOSTRA // 2
     return pd.concat([ordenadas.head(metade), ordenadas.tail(metade)])
+
+
+def _aplicar_regras_base(comparacao: pd.DataFrame, bases: BasesSimulacao) -> pd.DataFrame:
+    ajustes = calcular_ajustes(bases.rh, bases.intercorrencias)
+    bruta = comparacao["comissao_simulada"]
+    ajustada = aplicar_ajustes(comparacao, ajustes, ["comissao", "comissao_simulada"])
+    ajustada["comissao_simulada_bruta"] = bruta
+    ajustada["diferenca"] = (ajustada["comissao_simulada"] - ajustada["comissao"]).round(2)
+    return ajustada

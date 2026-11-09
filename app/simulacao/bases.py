@@ -6,11 +6,13 @@ de 24 a 28/11), enquanto loja e cargo são vínculos mensais (dia 1º).
 """
 from collections.abc import Callable
 from contextlib import AbstractContextManager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Protocol
 
 import pandas as pd
+
+from app.simulacao.regras_base import intercorrencias_vazias
 
 SQL_RH = """
 SELECT f.matricula, to_char(fl.date_ref, 'YYYY-MM') AS competencia,
@@ -65,6 +67,7 @@ class BasesSimulacao:
     rh: pd.DataFrame
     vendas: pd.DataFrame
     comissoes: pd.DataFrame
+    intercorrencias: pd.DataFrame = field(default_factory=intercorrencias_vazias)
 
     def como_dict(self) -> dict[str, pd.DataFrame]:
         return {"rh": self.rh, "vendas": self.vendas, "comissoes": self.comissoes}

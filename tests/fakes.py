@@ -39,6 +39,20 @@ def bases_pequenas() -> BasesSimulacao:
     return BasesSimulacao(rh=RH.copy(), vendas=VENDAS.copy(), comissoes=COMISSOES.copy())
 
 
+def bases_com_admissao_no_mes() -> BasesSimulacao:
+    rh = RH.copy()
+    rh.loc[rh["matricula"] == "M1", "data_admissao"] = pd.to_datetime("2025-11-10")
+    return BasesSimulacao(rh=rh, vendas=VENDAS.copy(), comissoes=COMISSOES.copy())
+
+
+def bases_com_afastamento_piso() -> BasesSimulacao:
+    inter = pd.DataFrame([{
+        "matricula": "M1", "tipo": "afastamento",
+        "data_inicio": pd.to_datetime("2025-11-06"), "data_fim": pd.to_datetime("2025-11-15"),
+    }])
+    return BasesSimulacao(rh=RH.copy(), vendas=VENDAS.copy(), comissoes=COMISSOES.copy(), intercorrencias=inter)
+
+
 def parametros_black_friday(**sobrescrever: object) -> ParametrosSimulacao:
     valores = {
         "data_inicio": date(2025, 11, 24), "data_fim": date(2025, 11, 30), "pct_acrescimo": 1.0,
