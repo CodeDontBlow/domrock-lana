@@ -12,7 +12,7 @@ LIMITE_LOJAS = 5
 RESSALVAS = [
     "Simulação sobre vendas que já aconteceram: supõe que as pessoas venderiam o mesmo com a regra nova.",
     "A comparação com a comissão atual é o número mais confiável; o total absoluto é apurado por nós, não é a folha oficial.",
-    "A comissão atual ainda não aplica proporcional de admissão/demissão nem férias e afastamentos.",
+    "Admissão e demissão no mês (regras 5c e 5d) já entram na apuração; férias e afastamentos (5e a 5g) entram quando as intercorrências de RH forem carregadas.",
 ]
 
 

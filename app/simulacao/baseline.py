@@ -2,7 +2,7 @@
 
 Regras base da Sprint 1: % da combinação marca + cargo sobre a venda do mês da matrícula;
 o gerente (cargo 150) recebe sobre a venda total da loja, incluindo a própria.
-Proporcional de admissão/demissão fica para a Sprint 2.
+As regras 5c a 5g estão em regras_base.py e são aplicadas depois da execução, em service._executar.
 """
 import pandas as pd
 

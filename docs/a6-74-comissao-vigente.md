@@ -13,8 +13,8 @@ onde cada parte está no código.
   conversa (`CampanhaDoSistema`, 4.3). Pedido sem `campanhas` vale como lista vazia.
 - **Da especificação:** os itens 2h, 3g, 4g, 5f, 5g, 6f e 6g do `Especificacao.pdf` contam
   como aprovados (estudo A6-73). A Lana carrega sozinha, de
-  `app/simulacao/especificacao_2025.json` (`ArquivoEspecificacao`). No A6-77 o arquivo dá
-  lugar à tabela, trocando só a implementação de `CatalogoEspecificacao`.
+  `app/simulacao/especificacao_2025.json` (`ArquivoEspecificacao`). Se esses itens forem
+  para uma tabela, o arquivo sai trocando só a implementação de `CatalogoEspecificacao`.
 - Item da especificação sai com `campanha_id`, `versao`, `autor`, `aprovador` e
   `aprovada_em` nulos. A 3g ("a marca 10 usa a % da marca 20") usa `marca_referencia`,
   campo interno da Lana: no histórico ela sai com o `pct_novo` já resolvido por cargo.
