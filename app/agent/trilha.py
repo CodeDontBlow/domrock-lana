@@ -15,6 +15,7 @@ from langchain_core.messages import AIMessage, BaseMessage, ToolCall, ToolMessag
 from pydantic import BaseModel
 
 from app.core.trilha import PassoTrilha, competencias_por_extenso
+from app.tools.correcao_tool.tool import NOME_TOOL_CORRECAO
 from app.tools.regra_tool.tool import NOME_TOOL_REGRA
 
 NOME_TOOL_CONSULTA = "consultar_banco"
@@ -69,6 +70,8 @@ def _passo(ordem: int, chamada: ToolCall, retorno: ToolMessage | None) -> PassoT
         return _passo_consulta(ordem, resultado)
     if nome == NOME_TOOL_REGRA:
         return _passo_regra(ordem, resultado)
+    if nome == NOME_TOOL_CORRECAO:
+        return _passo_correcao(ordem, resultado)
     return _passo_generico(ordem, nome, resultado)
 
 
@@ -118,6 +121,30 @@ def _descricao_regra(resultado: dict[str, Any]) -> str:
     if not faltantes:
         return "Ficha da campanha registrada"
     return f"Ficha da campanha registrada; falta informar: {', '.join(faltantes)}"
+
+
+def _passo_correcao(ordem: int, resultado: dict[str, Any]) -> PassoTrilha:
+    comum = {
+        "ordem": ordem,
+        "ferramenta": NOME_TOOL_CORRECAO,
+        "tabelas_acessadas": list(resultado.get("tabelas") or []),
+        "competencias": list(resultado.get("competencias") or []),
+        "filtros": texto_dos_filtros(resultado.get("filtros")),
+        "sql_executado": resultado.get("sql"),
+        "tempo_ms": _inteiro(resultado.get("tempo")),
+    }
+    if resultado.get("situacao") != "ok":
+        return PassoTrilha(
+            **comum,
+            descricao="Falha ao registrar solicitação de correção",
+            situacao="ERRO",
+            mensagem_erro=str(resultado.get("situacao") or "sem detalhe"),
+        )
+    solic = resultado.get("solicitacao") or {}
+    tipo = solic.get("tipo") or "correção"
+    matr = solic.get("matricula") or ""
+    descricao = f"Solicitação de {tipo} registrada para {matr}".strip()
+    return PassoTrilha(**comum, descricao=descricao, situacao="SUCESSO")
 
 
 def _passo_generico(ordem: int, nome: str, resultado: dict[str, Any]) -> PassoTrilha:

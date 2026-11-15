@@ -11,6 +11,7 @@ from app.agent.graph import lana
 from app.agent.prompts import SYSTEM_RULES
 from app.agent.trilha import montar_trilha_chat
 from app.core.config import extract_text, get_settings
+from app.tools.correcao_tool.tool import NOME_TOOL_CORRECAO
 from app.tools.regra_tool.tool import NOME_TOOL_REGRA
 
 def _parse_tool_content(conteudo: Any) -> Any:
@@ -123,6 +124,14 @@ def extrair_regra(messages: list[BaseMessage]) -> dict[str, Any] | None:
     return None
 
 
+def extrair_solicitacao(messages: list[BaseMessage]) -> dict[str, Any] | None:
+    """Última solicitação de alteração/correção registrada no turno (artifact da tool), ou None."""
+    for m in reversed(messages):
+        if isinstance(m, ToolMessage) and m.name == NOME_TOOL_CORRECAO and m.artifact:
+            return m.artifact
+    return None
+
+
 def contexto_do_painel(regra: dict[str, Any] | None) -> str:
     """Valores atuais do painel, que o usuário pode ter editado sem o agente saber.
 
@@ -215,6 +224,7 @@ def _montar_resultado_turno(
     historico: list[dict[str, Any]] | None,
 ) -> dict[str, Any]:
     regra_do_turno = extrair_regra(messages)
+    solicitacao_do_turno = extrair_solicitacao(messages)
     trilha = montar_trilha_chat(messages, get_settings().AI_MODEL)
     resposta = _conferir_resposta_do_turno(
         messages[-1], user_input, regra, regra_do_turno, trilha, historico_mensagens, historico
@@ -224,6 +234,7 @@ def _montar_resultado_turno(
         "response": resposta,
         "events": get_events(messages),
         "regra": regra_do_turno,
+        "solicitacao": solicitacao_do_turno,
         "trilha": trilha,
     }
 

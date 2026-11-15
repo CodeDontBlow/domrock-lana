@@ -33,6 +33,8 @@ class AgentResponse(BaseModel):
     events: list[AgentEvents] = []
     # Regra registrada neste turno (contrato de estrutura_parametros_regra), para o painel de revisão.
     regra: dict[str, Any] | None = None
+    # Solicitação de alteração/correção na base de dados (A6-81)
+    solicitacao: dict[str, Any] | None = None
     # De onde veio cada número (contrato 2.2), montada pelo código; None quando não usou ferramenta.
     trilha: dict[str, Any] | None = None
 

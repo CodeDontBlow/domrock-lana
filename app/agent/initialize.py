@@ -1,4 +1,5 @@
 from app.core.config import get_ai_model
+from app.tools.correcao_tool.tool import registrar_solicitacao_correcao
 from app.tools.query_tool.tool import consultar_banco
 from app.tools.regra_tool.tool import registrar_parametros_regra
 from typing import TypedDict, Annotated
@@ -11,7 +12,7 @@ class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
 
 # Compilando as Tools
-lana_tools = [consultar_banco, registrar_parametros_regra]
+lana_tools = [consultar_banco, registrar_parametros_regra, registrar_solicitacao_correcao]
 
 # Exportando o modelo com Tools
 lana_agent = get_ai_model(ferramentas=lana_tools)
