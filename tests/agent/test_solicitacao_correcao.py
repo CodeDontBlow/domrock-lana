@@ -255,3 +255,59 @@ def test_criterio_3_pedido_nao_correcao_recusa_e_explica_campanha():
         )
         assert "campanha" in resposta_turno["response"].lower()
         assert resposta_turno["solicitacao"] is None
+
+
+def test_hitl_refinamento_atualiza_solicitacao_existente():
+    """No fluxo HITL, o usuário pode pedir para alterar a solicitação aberta no chat,
+    e a Lana chama novamente a tool atualizando apenas o campo solicitado."""
+    solic_inicial = {
+        "tipo": "Transferência de loja",
+        "matricula": "MATRIC-38",
+        "competencia": "10/2025",
+        "antes": "MATRIC-38 na loja 5",
+        "depois": "MATRIC-38 na loja 8",
+        "motivo": "Transferência inicial",
+    }
+    tool_msg_refinada = registrar_solicitacao_correcao.invoke(
+        {
+            "name": NOME_TOOL_CORRECAO,
+            "args": {
+                "tipo": "Transferência de loja",
+                "matricula": "MATRIC-38",
+                "competencia": "10/2025",
+                "antes": "MATRIC-38 na loja 5",
+                "depois": "MATRIC-38 na loja 9",
+                "motivo": "Transferência corrigida para loja 9",
+            },
+            "id": "call-refinada",
+            "type": "tool_call",
+        }
+    )
+    mensagens = [
+        AIMessage(
+            content="",
+            tool_calls=[{
+                "name": NOME_TOOL_CORRECAO,
+                "args": {
+                    "tipo": "Transferência de loja",
+                    "matricula": "MATRIC-38",
+                    "competencia": "10/2025",
+                    "antes": "MATRIC-38 na loja 5",
+                    "depois": "MATRIC-38 na loja 9",
+                    "motivo": "Transferência corrigida para loja 9",
+                },
+                "id": "call-refinada",
+            }],
+        ),
+        tool_msg_refinada,
+        AIMessage(content="Atualizei a solicitação no painel para a loja 9; ela vale após aprovação de um Supervisor."),
+    ]
+    with patch("app.agent.service._executar_grafo", return_value=mensagens):
+        resposta = lana_invoke(
+            thread_id="chat-hitl",
+            user_input="mude para a loja 9",
+            solicitacao=solic_inicial,
+        )
+        assert resposta["solicitacao"] is not None
+        assert resposta["solicitacao"]["depois"] == "MATRIC-38 na loja 9"
+        assert resposta["solicitacao"]["valor_depois"] == "9"

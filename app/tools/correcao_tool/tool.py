@@ -31,25 +31,40 @@ def registrar_solicitacao_correcao(
     motivo: str | None = None,
     sql: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    """Registra uma solicitação de correção pontual na base de dados para aprovação dos supervisores.
+    """Registra uma solicitação de correção/alteração na base de dados para o painel HITL (Human-In-The-Loop).
 
-    Use SOMENTE quando o usuário solicitar expressamente uma alteração ou correção na base de dados,
-    e após confirmar na base (via `consultar_banco`) que a matrícula existe e que o valor anterior
-    informado coincide com os dados atuais daquela competência.
-    NUNCA chame esta ferramenta para requisições de campanhas, simulações ou consultas gerais.
-    O código SQL de alteração NÃO será executado pelo agente, mas sim submetido para avaliação
-    e aprovação da equipe de supervisores.
+    Use SOMENTE quando o usuário solicitar alteração cadastral ou correção na base de dados,
+    e após confirmar na base (via `consultar_banco`) que a matrícula existe e que os dados atuais
+    daquela competência foram checados. Se os dados não coincidirem com o banco, avise o usuário e
+    NÃO abra solicitação.
+    NUNCA use esta ferramenta para regras de campanhas de comissionamento (use registrar_parametros_regra).
+
+    FLUXO HITL (Human-In-The-Loop) E REFINAMENTO:
+    - Esta ferramenta NÃO executa o SQL no banco. Ela gera uma proposta de solicitação que é exibida
+      no componente HITL do chat. A solicitação NÃO é enviada imediatamente aos supervisores: ela permanece
+      aguardando o usuário revisar e clicar no botão para enviar.
+    - Se o usuário pedir para alterar qualquer parâmetro da solicitação pelo chat (ex: 'mude a loja para 8',
+      'troque o motivo', 'mude para outubro'), chame esta ferramenta NOVAMENTE com TODOS os parâmetros conhecidos,
+      atualizando apenas o que o usuário pediu para mudar. O componente HITL no chat será atualizado com os novos valores.
+
+    PADRÃO DE FORMATAÇÃO DE 'antes' E 'depois':
+    - AMBOS os campos DEVEM INCLUIR A MATRÍCULA do funcionário e possuir comprimento textual similar/simétrico
+      para que a comparação visual fique balanceada e legível no painel.
+    - Exemplos recomendados:
+        * Transferência de loja: antes="MATRIC-38 na loja 5", depois="MATRIC-38 na loja 8"
+        * Mudança de cargo: antes="MATRIC-10 como Vendedor", depois="MATRIC-10 como Gerente"
+        * Correção de vendas: antes="MATRIC-12 com R$ 1.000,00", depois="MATRIC-12 com R$ 1.500,00"
+        * Datas/vigência: antes="MATRIC-302 em 09/2025", depois="MATRIC-302 em 10/2025"
 
     Args:
         tipo: Tipo da alteração com nome amigável (ex.: "Transferência de loja", "Mudança de cargo",
             "Data de demissão", "Data de admissão", "Correção de venda", "Exclusão", "Atualização").
         matricula: Matrícula do funcionário afetado (ex.: "MATRIC-38").
         competencia: Mês/ano da competência afetada no formato MM/yyyy (ex.: "10/2025" ou "11/2025").
-        antes: Valor anterior confirmado na base (ex.: "loja 5" ou "5").
-        depois: Valor novo solicitado (ex.: "loja 8" ou "8").
-        motivo: Opcional. Motivo ou sugestão de justificativa gerada pelo agente ou informada pelo usuário.
-        sql: Opcional. Código SQL de alteração gerado para o banco PostgreSQL. Se omitido, a ferramenta
-            gerará automaticamente o SQL apropriado.
+        antes: Estado anterior incluindo a matrícula do funcionário (ex.: "MATRIC-38 na loja 5").
+        depois: Estado novo solicitado incluindo a matrícula com comprimento similar ao 'antes' (ex.: "MATRIC-38 na loja 8").
+        motivo: Opcional. Motivo ou justificativa da alteração.
+        sql: Opcional. Código SQL de alteração gerado para avaliação dos supervisores.
     """
     inicio = time.perf_counter()
     try:

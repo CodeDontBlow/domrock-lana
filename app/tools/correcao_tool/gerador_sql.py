@@ -4,42 +4,33 @@ from typing import Any
 from app.tools.correcao_tool.dtos import TipoCorrecao, normalizar_tipo
 
 MESES_PT = {
-    "jan": 1,
-    "janeiro": 1,
-    "fev": 2,
-    "fevereiro": 2,
-    "mar": 3,
-    "marco": 3,
-    "março": 3,
-    "abr": 4,
-    "abril": 4,
-    "mai": 5,
-    "maio": 5,
-    "jun": 6,
-    "junho": 6,
-    "jul": 7,
-    "julho": 7,
-    "ago": 8,
-    "agosto": 8,
-    "set": 9,
-    "setembro": 9,
-    "out": 10,
-    "outubro": 10,
-    "nov": 11,
-    "novembro": 11,
-    "dez": 12,
-    "dezembro": 12,
+    "jan": 1, "janeiro": 1,
+    "fev": 2, "fevereiro": 2,
+    "mar": 3, "marco": 3, "março": 3,
+    "abr": 4, "abril": 4,
+    "mai": 5, "maio": 5,
+    "jun": 6, "junho": 6,
+    "jul": 7, "julho": 7,
+    "ago": 8, "agosto": 8,
+    "set": 9, "setembro": 9,
+    "out": 10, "outubro": 10,
+    "nov": 11, "novembro": 11,
+    "dez": 12, "dezembro": 12,
 }
 
 
 def extrair_codigo_ou_valor(texto: str) -> str:
-    """Extrai o código numérico ou identificador de uma string como 'loja 5', 'loja 8', '100'."""
+    """Extrai o código numérico ou identificador de uma string como 'loja 5', 'loja 8', '100', 'MATRIC-38 na loja 5'."""
     if not texto:
         return ""
     texto_limpo = texto.strip()
-    match = re.search(r"\b(\d+)\b", texto_limpo)
+    texto_sem_matricula = re.sub(r"MATRIC-\d+", "", texto_limpo, flags=re.IGNORECASE)
+    match = re.search(r"\b(\d+)\b", texto_sem_matricula)
     if match:
         return match.group(1)
+    match_orig = re.search(r"\b(\d+)\b", texto_limpo)
+    if match_orig:
+        return match_orig.group(1)
     return texto_limpo
 
 

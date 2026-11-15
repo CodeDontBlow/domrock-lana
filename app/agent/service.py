@@ -146,6 +146,28 @@ def contexto_do_painel(regra: dict[str, Any] | None) -> str:
     )
 
 
+def contexto_da_solicitacao(solicitacao: dict[str, Any] | None) -> str:
+    """Valores atuais da solicitação de alteração no chat/painel HITL.
+
+    Permite que o usuário peça alterações em linguagem natural e o agente atualize a solicitação existente.
+    """
+    if not solicitacao:
+        return ""
+    campos = {
+        "tipo": solicitacao.get("tipo"),
+        "matricula": solicitacao.get("matricula"),
+        "competencia": solicitacao.get("competencia"),
+        "antes": solicitacao.get("antes"),
+        "depois": solicitacao.get("depois"),
+        "motivo": solicitacao.get("motivo"),
+    }
+    return (
+        "[Solicitação de alteração da base atual no chat/painel (HITL), ainda NÃO enviada aos supervisores. "
+        "Parta destes valores ao chamar registrar_solicitacao_correcao novamente e altere apenas o que o usuário pedir: "
+        f"{json.dumps(campos, ensure_ascii=False)}]\n\n"
+    )
+
+
 def _converter_item_historico(item: dict[str, Any] | BaseMessage) -> BaseMessage:
     if isinstance(item, BaseMessage):
         return item
@@ -168,8 +190,10 @@ def _mensagens_de_entrada(
     user_input: str,
     regra: dict[str, Any] | None,
     historico_mensagens: list[BaseMessage],
+    solicitacao: dict[str, Any] | None = None,
 ) -> list[BaseMessage]:
-    mensagem_atual = HumanMessage(content=contexto_do_painel(regra) + user_input)
+    prefixo = contexto_do_painel(regra) + contexto_da_solicitacao(solicitacao)
+    mensagem_atual = HumanMessage(content=prefixo + user_input)
     return [*SYSTEM_RULES, *historico_mensagens, mensagem_atual]
 
 
@@ -189,9 +213,10 @@ def lana_invoke(
     user_input: str,
     regra: dict[str, Any] | None = None,
     historico: list[dict[str, Any]] | None = None,
+    solicitacao: dict[str, Any] | None = None,
 ):
     with _trava_do_chat(thread_id):
-        return _invocar_turno(thread_id, user_input, regra, historico)
+        return _invocar_turno(thread_id, user_input, regra, historico, solicitacao)
 
 
 def _executar_grafo(entrada: list[BaseMessage]) -> list[BaseMessage]:
@@ -244,9 +269,10 @@ def _invocar_turno(
     user_input: str,
     regra: dict[str, Any] | None,
     historico: list[dict[str, Any]] | None = None,
+    solicitacao: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     historico_mensagens = _converter_historico(historico)
-    entrada = _mensagens_de_entrada(user_input, regra, historico_mensagens)
+    entrada = _mensagens_de_entrada(user_input, regra, historico_mensagens, solicitacao)
     messages = _executar_grafo(entrada)
     return _montar_resultado_turno(
         thread_id, messages, user_input, regra, historico_mensagens, historico

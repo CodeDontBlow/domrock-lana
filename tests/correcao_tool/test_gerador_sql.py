@@ -20,6 +20,9 @@ def test_converter_competencia_formatos_variados():
 def test_extrair_codigo_ou_valor():
     assert extrair_codigo_ou_valor("loja 5") == "5"
     assert extrair_codigo_ou_valor("loja 8") == "8"
+    assert extrair_codigo_ou_valor("MATRIC-38 na loja 5") == "5"
+    assert extrair_codigo_ou_valor("MATRIC-302 na loja 8") == "8"
+    assert extrair_codigo_ou_valor("MATRIC-302: loja 9") == "9"
     assert extrair_codigo_ou_valor("150") == "150"
     assert extrair_codigo_ou_valor("cargo 200") == "200"
     assert extrair_codigo_ou_valor("sem numero") == "sem numero"
