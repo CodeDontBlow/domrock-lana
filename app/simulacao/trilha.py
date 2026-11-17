@@ -13,7 +13,17 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from app.core.trilha import PassoTrilha, competencias_por_extenso
+from app.core.trilha import (
+    PassoTrilha,
+    competencias_por_extenso,
+    gravar_evento,
+    gravar_evento_trilha,
+    limpar_eventos,
+    limpar_eventos_trilha,
+    obter_eventos,
+    obter_eventos_trilha,
+    registrar_evento,
+)
 from app.simulacao.bases import SQL_DAS_BASES, TABELAS_DAS_BASES, BasesSimulacao
 from app.simulacao.dtos import TotaisSimulacao, TrilhaSimulacao
 from app.simulacao.resumo import gerar_premissas, vendas_do_periodo
@@ -72,7 +82,7 @@ def montar_trilha_simulacao(execucao: ExecucaoSimulada) -> TrilhaSimulacao:
         passo.tempo_ms = execucao.tempos.get(passo.ferramenta, 0)
     return TrilhaSimulacao(
         modelo=execucao.modelo, tentativas=execucao.tentativas, premissas=gerar_premissas(execucao.parametros),
-        passos=passos, campanhas=execucao.campanhas,
+        passos=passos, campanhas=execucao.campanhas, eventos=obter_eventos_trilha(),
     )
 
 

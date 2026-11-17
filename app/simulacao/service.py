@@ -2,6 +2,7 @@
 confere o resultado e resume. A LLM só entra na geração do código e na redação final.
 """
 from dataclasses import dataclass, replace
+from typing import Any
 
 import pandas as pd
 
@@ -23,6 +24,7 @@ from app.simulacao.resumo import (
     quebrar_por,
 )
 from app.simulacao.trilha import Cronometro, ExecucaoSimulada, montar_trilha_simulacao
+from app.tools.code_tool.analise_seguranca import AchadoSeguranca, analisar_seguranca
 from app.tools.code_tool.dtos import CodigoGerado, ContextoGeracao
 from app.tools.code_tool.gerador import GeradorCodigo, GeradorCodigoModelo
 from app.tools.code_tool.runner import CodeRunner
@@ -37,9 +39,20 @@ CAMPOS_EXPLICACAO = {"totais", "por_marca", "por_cargo", "orcamento", "meta", "i
 class SimulacaoFalhouError(RuntimeError):
     """Nenhuma tentativa produziu resultado válido. Nunca se devolve resultado parcial."""
 
-    def __init__(self, etapa: str, mensagem: str, codigo: str | None = None) -> None:
+    def __init__(
+        self, etapa: str, mensagem: str, codigo: str | None = None, alertas: list[dict[str, Any]] | None = None
+    ) -> None:
         super().__init__(f"{etapa}: {mensagem}")
         self.etapa, self.mensagem, self.codigo = etapa, mensagem, codigo
+        self.alertas = alertas or []
+
+
+class CodigoInseguroError(RuntimeError):
+    """O código gerado possui achados na análise de segurança estática."""
+
+    def __init__(self, mensagem: str, achados: list[AchadoSeguranca]) -> None:
+        super().__init__(mensagem)
+        self.achados = achados
 
 
 class ExecucaoFalhouError(RuntimeError):
@@ -79,8 +92,10 @@ class SimuladorCampanha:
         self._explicador, self._referencia, self._max_tentativas = explicador, referencia, max_tentativas
         self._recalculo = recalculo or GeradorCodigoModelo()
         self._especificacao = especificacao
+        self._alertas: list[dict[str, Any]] = []
 
     def simular(self, regra: RegraCampanha, campanhas: list[CampanhaContexto] | None = None) -> ResultadoSimulacao:
+        self._alertas = []
         parametros = ler_parametros(regra)
         competencias = competencias_do_periodo(parametros.data_inicio, parametros.data_fim)
         cronometro = Cronometro()
@@ -104,7 +119,9 @@ class SimuladorCampanha:
             linhas_executadas=len(aprovada.comparacao), totais=resultado.totais,
             campanhas=fontes_da_vigente(fontes, periodos), tempos=cronometro.tempos,
         ))
-        return resultado.model_copy(update={"comissao_periodo": periodos, "conflitos": conflitos, "trilha": trilha})
+        return resultado.model_copy(update={
+            "comissao_periodo": periodos, "conflitos": conflitos, "trilha": trilha, "alertas": list(self._alertas),
+        })
 
     def _campanhas_da_especificacao(self) -> list[CampanhaContexto]:
         return self._especificacao.campanhas() if self._especificacao else []
@@ -141,17 +158,35 @@ class SimuladorCampanha:
                 with cronometro.medir("conferir"):
                     conferir_contra_referencia(comparacao, conferencia.comparacao)
                 return TentativaAprovada(codigo, comparacao, numero, CONFERIDO)
+            except CodigoInseguroError as falha:
+                for a in falha.achados:
+                    self._alertas.append({
+                        "tipo": "codigo_inseguro",
+                        "linha": a.linha,
+                        "descricao": a.descricao,
+                        "mensagem": f"Código Python suspeito na linha {a.linha}: {a.descricao}",
+                    })
+                erro = f"{type(falha).__name__}: {falha}"
             # Qualquer falha da tentativa (LLM fora/429, código inválido, retorno com tipo errado)
             # vira nova tentativa e, no fim, um 422 com a causa, nunca um 500 genérico.
             except Exception as falha:
                 erro = f"{type(falha).__name__}: {falha}"
         if conferencia is not None:
             return replace(conferencia, numero=self._max_tentativas, observacao=f"{USOU_REFERENCIA} Último erro: {erro}")
-        raise SimulacaoFalhouError("geracao_codigo", erro or "sem detalhe", codigo.fonte if codigo else None)
+        raise SimulacaoFalhouError(
+            "seguranca_codigo" if self._alertas else "geracao_codigo",
+            erro or "sem detalhe",
+            codigo.fonte if codigo else None,
+            alertas=self._alertas,
+        )
 
     def _executar(
         self, codigo: CodigoGerado, contexto: ContextoGeracao, bases: BasesSimulacao, baseline: pd.DataFrame,
     ) -> pd.DataFrame:
+        achados = analisar_seguranca(codigo.fonte)
+        if achados:
+            descricoes = "; ".join(f"linha {a.linha}: {a.descricao}" for a in achados)
+            raise CodigoInseguroError(f"Código suspeito detectado: {descricoes}", achados=achados)
         execucao = self._runner.executar(codigo.fonte, bases.como_dict(), baseline, contexto.competencias)
         if not execucao.ok or execucao.apuracao_simulada is None or execucao.contribuicoes is None:
             raise ExecucaoFalhouError(f"{execucao.status}: {execucao.mensagem}")

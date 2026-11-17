@@ -264,3 +264,41 @@ def test_trilha_diz_quando_valeu_o_calculo_de_referencia() -> None:
     assert "divergiu do cálculo de referência em 2 tentativas" in trilha.passos[2].descricao
     assert trilha.passos[4].descricao.startswith("5 conferências passaram:")
 
+
+class RunnerEspiao:
+    def __init__(self, runner: SubprocessRunner) -> None:
+        self.runner = runner
+        self.chamadas = 0
+
+    def executar(self, fonte, bases, apuracao_base, competencias):
+        self.chamadas += 1
+        return self.runner.executar(fonte, bases, apuracao_base, competencias)
+
+
+def test_codigo_com_import_os_nao_e_executado_e_gera_alerta() -> None:
+    codigo_inseguro = (
+        "def aplicar_regra(bases, apuracao_base, competencias):\n"
+        "    import os\n"
+        "    return apuracao_base\n"
+    )
+    gerador = FakeGeradorSequencial([codigo_inseguro, codigo_inseguro])
+    runner_espiao = RunnerEspiao(SubprocessRunner())
+    simulador = SimuladorCampanha(FakeFonteBases(bases_pequenas()), gerador, runner_espiao, FakeExplicador())
+
+    with pytest.raises(SimulacaoFalhouError) as exc_info:
+        simulador.simular(montar_regra(VALORES, "bf", "draft-1"))
+
+    assert runner_espiao.chamadas == 0
+    assert exc_info.value.alertas
+    assert exc_info.value.alertas[0]["tipo"] == "codigo_inseguro"
+    assert exc_info.value.alertas[0]["linha"] == 2
+    assert "os" in exc_info.value.alertas[0]["descricao"]
+
+
+def test_codigo_limpo_continua_rodando_normalmente_sem_alertas() -> None:
+    gerador = FakeGeradorSequencial([fonte_modelo(parametros_black_friday())])
+    simulador = _simulador(gerador)
+    resultado = simulador.simular(montar_regra(VALORES, "bf", "draft-1"))
+    assert resultado.alertas == []
+
+

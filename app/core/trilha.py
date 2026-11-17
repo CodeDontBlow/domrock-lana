@@ -3,6 +3,7 @@
 A trilha é montada pelo código, nunca escrita pela LLM (A6-70): cada campo sai do resultado da
 ferramenta ou do passo da simulação.
 """
+import threading
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -27,6 +28,40 @@ class PassoTrilha(BaseModel):
     tempo_ms: int = 0
     situacao: SituacaoPasso = "SUCESSO"
     mensagem_erro: str | None = None
+    # A6-95: campos de registro de segurança (ex: consulta bloqueada)
+    motivo: str | None = None
+    horario: str | None = None
+    status: str | None = None
+    sql: str | None = None
+
+
+_EVENTOS_TRILHA: list[dict[str, Any]] = []
+_TRAVA_EVENTOS = threading.Lock()
+
+
+def gravar_evento_trilha(evento: dict[str, Any]) -> None:
+    """Registra um evento na trilha (ex.: consulta bloqueada)."""
+    with _TRAVA_EVENTOS:
+        _EVENTOS_TRILHA.append(evento)
+
+
+def obter_eventos_trilha() -> list[dict[str, Any]]:
+    """Devolve a lista de eventos gravados na trilha."""
+    with _TRAVA_EVENTOS:
+        return list(_EVENTOS_TRILHA)
+
+
+def limpar_eventos_trilha() -> None:
+    """Limpa os eventos registrados na trilha."""
+    with _TRAVA_EVENTOS:
+        _EVENTOS_TRILHA.clear()
+
+
+# Aliases
+gravar_evento = gravar_evento_trilha
+registrar_evento = gravar_evento_trilha
+obter_eventos = obter_eventos_trilha
+limpar_eventos = limpar_eventos_trilha
 
 
 def competencia_por_extenso(competencia: str) -> str:

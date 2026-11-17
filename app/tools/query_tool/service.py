@@ -6,6 +6,7 @@ from functools import lru_cache
 
 from app.core.config import extract_text, get_ai_model
 from app.core.db import executar_select
+from app.core.trilha import gravar_evento_trilha
 from app.tools.dtos import calcular_tempo_ms
 from app.tools.query_tool.dtos import QueryRequestBody, QueryResponseBody
 from app.tools.query_tool.guard import LIMITE_LINHAS, SqlInseguro, extrair_metadados_sql, validar
@@ -73,12 +74,24 @@ def executar(body: QueryRequestBody) -> QueryResponseBody:
         sql_seguro = validar(sql)
         meta = extrair_metadados_sql(sql_seguro)
     except SqlInseguro as e:
+        motivo_bloqueio = str(e)
+        horario_bloqueio = datetime.now().isoformat()
         logger.warning("SQL bloqueado: %s | sql=%s", e, sql)
+        evento_bloqueio = {
+            "sql": sql,
+            "motivo": motivo_bloqueio,
+            "horario": horario_bloqueio,
+            "status": "bloqueada",
+        }
+        gravar_evento_trilha(evento_bloqueio)
         return QueryResponseBody(
             status="bloqueado", 
             sql_gerado=sql, 
             erro=f"O Guard de segurança bloqueou o SQL. Motivo: {e}. Reescreva a query.", 
             mensagem="Consulta bloqueada por segurança.",
+            motivo=motivo_bloqueio,
+            horario=horario_bloqueio,
+            evento=evento_bloqueio,
             situacao="erro: consulta bloqueada por segurança",
             tempo=calcular_tempo_ms(inicio),
             tabelas=meta.get("tabelas", []),

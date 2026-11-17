@@ -38,6 +38,7 @@ class TrilhaChat(BaseModel):
     tentativas: int | None = None
     premissas: list[str] = []
     passos: list[PassoTrilha]
+    eventos: list[dict[str, Any]] = []
 
 
 def montar_trilha_chat(messages: list[BaseMessage], modelo_padrao: str) -> dict[str, Any] | None:
@@ -47,7 +48,19 @@ def montar_trilha_chat(messages: list[BaseMessage], modelo_padrao: str) -> dict[
         return None
     retornos = {m.tool_call_id: m for m in messages if isinstance(m, ToolMessage)}
     passos = [_passo(ordem, chamada, retornos.get(chamada["id"])) for ordem, chamada in enumerate(chamadas, start=1)]
-    return TrilhaChat(modelo=_modelo_usado(messages, modelo_padrao), passos=passos).model_dump(mode="json")
+    eventos = [
+        {
+            "sql": p.sql or p.sql_executado,
+            "motivo": p.motivo or p.mensagem_erro,
+            "horario": p.horario,
+            "status": p.status or "bloqueada",
+        }
+        for p in passos
+        if p.status == "bloqueada" or (p.ferramenta == NOME_TOOL_CONSULTA and p.situacao == "ERRO" and p.motivo)
+    ]
+    return TrilhaChat(
+        modelo=_modelo_usado(messages, modelo_padrao), passos=passos, eventos=eventos
+    ).model_dump(mode="json")
 
 
 def _modelo_usado(messages: list[BaseMessage], modelo_padrao: str) -> str:
@@ -75,17 +88,29 @@ def _passo(ordem: int, chamada: ToolCall, retorno: ToolMessage | None) -> PassoT
 def _passo_consulta(ordem: int, resultado: dict[str, Any]) -> PassoTrilha:
     tabelas = list(resultado.get("tabelas") or [])
     competencias = list(resultado.get("competencias") or [])
+    sql = resultado.get("sql") or resultado.get("sql_gerado")
     comum = {
         "ordem": ordem, "ferramenta": NOME_TOOL_CONSULTA, "tabelas_acessadas": tabelas,
         "competencias": competencias, "filtros": texto_dos_filtros(resultado.get("filtros")),
-        "sql_executado": resultado.get("sql") or resultado.get("sql_gerado"),
+        "sql_executado": sql,
+        "sql": sql,
         "tempo_ms": _inteiro(resultado.get("tempo")),
     }
     status = resultado.get("status")
     if status != "sucesso":
-        mensagem = resultado.get("motivo") or resultado.get("mensagem") or f"Consulta terminou em {status!r}"
+        motivo = resultado.get("motivo")
+        mensagem = motivo or resultado.get("mensagem") or f"Consulta terminou em {status!r}"
         descricao = FALHAS_CONSULTA.get(str(status), "Falha na consulta ao banco")
-        return PassoTrilha(**comum, descricao=descricao, situacao="ERRO", mensagem_erro=str(mensagem))
+        passo_status = "bloqueada" if status == "bloqueado" else None
+        return PassoTrilha(
+            **comum,
+            descricao=descricao,
+            situacao="ERRO",
+            mensagem_erro=str(mensagem),
+            motivo=motivo,
+            horario=resultado.get("horario"),
+            status=passo_status,
+        )
     dados = list(resultado.get("dados") or [])
     return PassoTrilha(**comum, descricao=_descricao_consulta(tabelas, competencias, len(dados)),
                        registros_retornados=len(dados), dados=dados)

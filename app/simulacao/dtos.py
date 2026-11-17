@@ -1,3 +1,4 @@
+from typing import Any
 from pydantic import BaseModel, Field
 
 from app.core.trilha import PassoTrilha
@@ -98,6 +99,7 @@ class TrilhaSimulacao(BaseModel):
     premissas: list[str] = Field(default_factory=list)
     passos: list[PassoTrilha] = Field(default_factory=list)
     campanhas: list[HistoricoComissao] = Field(default_factory=list)
+    eventos: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class RegraAplicadaResultado(BaseModel):
@@ -152,3 +154,4 @@ class ResultadoSimulacao(BaseModel):
     apuracao_por_pessoa: list[ApuracaoPessoa] = Field(default_factory=list)
     regras_base_aplicadas: list[RegraBaseAplicada] = Field(default_factory=list)
     pessoas_no_piso: int = 0
+    alertas: list[dict[str, Any]] = Field(default_factory=list)

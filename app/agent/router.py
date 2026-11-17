@@ -17,6 +17,9 @@ class AgentEvents(BaseModel):
     sql: str | None = None
     args: dict[str, Any] | None = None
     result: Any | None = None
+    motivo: str | None = None
+    horario: str | None = None
+    status: str | None = None
 
 class AgentRequest(BaseModel):
     chat_id: str
@@ -35,6 +38,8 @@ class AgentResponse(BaseModel):
     regra: dict[str, Any] | None = None
     # De onde veio cada número (contrato 2.2), montada pelo código; None quando não usou ferramenta.
     trilha: dict[str, Any] | None = None
+    # A6-95: alertas técnicos que travam aprovação (consultas bloqueadas e achados de código)
+    alertas: list[dict[str, Any]] = []
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
