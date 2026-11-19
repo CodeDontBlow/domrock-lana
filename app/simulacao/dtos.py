@@ -50,6 +50,22 @@ class AtingimentoMeta(BaseModel):
     diferenca: float
 
 
+class SimulacaoNaMeta(BaseModel):
+    """Custo da campanha se a venda do período chegar à meta (A6-93).
+
+    As vendas do período, nas marcas da campanha, são multiplicadas por `fator` (meta ÷ venda do
+    período) e a comissão é apurada de novo pelo código determinístico. O custo NÃO é o custo real
+    × fator: a apuração não é linear (gerente sobre a venda da loja, arredondamento por pessoa, piso do A6-77).
+    """
+
+    fator: float                    # meta ÷ venda do período, 4 casas
+    vendas_na_meta: float           # soma das vendas escaladas do período (≈ meta), 2 casas
+    comissao_sem_campanha: float    # comissão atual (com as aprovadas) sobre as vendas escaladas
+    comissao_com_campanha: float    # comissão com esta campanha sobre as vendas escaladas
+    custo_adicional: float          # com − sem
+    cabe_no_orcamento: bool | None  # None quando a ficha não tem orçamento
+
+
 class RetornoCampanha(BaseModel):
     """Retorno da campanha pela conta provisória do A6-72 (ADR-004), até a Dom Rock definir "retorno".
 
@@ -152,3 +168,4 @@ class ResultadoSimulacao(BaseModel):
     apuracao_por_pessoa: list[ApuracaoPessoa] = Field(default_factory=list)
     regras_base_aplicadas: list[RegraBaseAplicada] = Field(default_factory=list)
     pessoas_no_piso: int = 0
+    na_meta: SimulacaoNaMeta | None = None

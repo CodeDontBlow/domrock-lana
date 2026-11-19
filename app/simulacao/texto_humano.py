@@ -63,19 +63,32 @@ def _maior_fatia(quebras: list[dict], nomes: dict[str, str], total: float) -> tu
 def fatos_da_simulacao(resumo: dict) -> list[str]:
     """Os números da simulação como frases curtas em português, prontas para a LLM usar.
 
-    Na ordem do resultado (A6-72): meta, comissão e, só se informado, orçamento. O retorno
-    provisório fica fora até a Sprint 3 (decisão do PO, 26/10).
+    Na ordem do resultado (A6-72, A6-93): meta, comissão, meta-alvo e, só se informado, orçamento.
+    O retorno provisório fica fora até a Sprint 3 (decisão do PO, 26/10).
     """
     totais = resumo["totais"]
     custo = totais["diferenca"]
     fatos = [
         _fato_meta(resumo["meta"]),
         f"Custo extra da campanha: {formatar_reais(custo)} ({_pct(totais['diferenca_pct'])} sobre a comissão atual de {formatar_reais(totais['baseline'])}).",
+        *([_fato_na_meta(resumo["na_meta"], resumo["meta"]["meta_vendas"])] if resumo.get("na_meta") else []),
         *([_fato_orcamento(resumo["orcamento"])] if resumo.get("orcamento") else []),
         *_fatos_impacto(resumo.get("impacto"), resumo.get("maiores_lojas", []), custo),
         *_fatos_quebras(resumo, custo),
     ]
     return fatos + [_fato_cenario(cenario) for cenario in resumo.get("cenarios", [])]
+
+
+def _fato_na_meta(na_meta: dict, meta_vendas: float) -> str:
+    """Fato da simulação na meta (A6-93): hipótese de atingimento da meta."""
+    texto = (
+        f"Se a venda chegar à meta de {formatar_reais(meta_vendas)}, "
+        f"o custo extra sobe para {formatar_reais(na_meta['custo_adicional'])}."
+    )
+    if na_meta.get("cabe_no_orcamento") is None:
+        return texto
+    status = "Esse custo cabe no orçamento." if na_meta["cabe_no_orcamento"] else "Esse custo passa do orçamento."
+    return f"{texto} {status}"
 
 
 def _fatos_quebras(resumo: dict, custo: float) -> list[str]:
