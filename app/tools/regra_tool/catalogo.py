@@ -36,10 +36,14 @@ METADADOS: dict[str, tuple[str, str, str]] = {
     "cargos_alvo": ("Cargos Elegíveis", "multi_select", "REGRA"),
     "meta_vendas": ("Meta Financeira da Campanha (R$)", "currency", "CONSTRAINT"),
     "orcamento_limite": ("Orçamento Máximo de Incentivo (R$)", "currency", "CONSTRAINT"),
+    # ADR-006: só valem para período futuro, que é calculado sobre um mês histórico.
+    "competencia_referencia": ("Mês de Referência", "month", "REGRA"),
+    "pct_crescimento": ("Crescimento sobre a Referência (%)", "percentage", "REGRA"),
 }
 
 # Orçamento é consequência, não parâmetro obrigatório (A6-72, ADR-004): a Lana não o pergunta.
-OPCIONAIS: frozenset[str] = frozenset({"orcamento_limite"})
+# Referência e crescimento: a Lana preenche a sugestão no período futuro e o histórico os ignora.
+OPCIONAIS: frozenset[str] = frozenset({"orcamento_limite", "competencia_referencia", "pct_crescimento"})
 
 OPCOES_POR_CHAVE: dict[str, list[OpcaoParametro]] = {
     "marcas_alvo": OPCOES_MARCAS,

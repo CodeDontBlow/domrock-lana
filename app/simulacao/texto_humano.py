@@ -68,8 +68,10 @@ def fatos_da_simulacao(resumo: dict) -> list[str]:
     """
     totais = resumo["totais"]
     custo = totais["diferenca"]
+    referencia = resumo.get("referencia")
     fatos = [
-        _fato_meta(resumo["meta"]),
+        *([_fato_referencia(referencia)] if referencia else []),
+        _fato_meta(resumo["meta"], com_referencia=bool(referencia)),
         f"Custo extra da campanha: {formatar_reais(custo)} ({_pct(totais['diferenca_pct'])} sobre a comissão atual de {formatar_reais(totais['baseline'])}).",
         *([_fato_orcamento(resumo["orcamento"])] if resumo.get("orcamento") else []),
         *_fatos_impacto(resumo.get("impacto"), resumo.get("maiores_lojas", []), custo),
@@ -87,14 +89,21 @@ def _fatos_quebras(resumo: dict, custo: float) -> list[str]:
     return fatos
 
 
-def _fato_meta(meta: dict) -> str:
+def _fato_referencia(referencia: dict) -> str:
+    """Período futuro (ADR-006). Ex.: "Calculado sobre nov/2025 (referência), crescimento de 10%. ..." """
+    return (f"{referencia['descricao']} As vendas são as da referência ajustadas pelo crescimento, "
+            "não uma previsão.")
+
+
+def _fato_meta(meta: dict, com_referencia: bool = False) -> str:
     """Histórico, não previsão: evita "meta batida" e "superou em 120%" (é 120% DA meta)."""
     pct = meta["pct_atingimento"]
     comparacao = f"{_pct(pct - 100)} acima da meta" if pct >= 100 else f"{_pct(100 - pct)} abaixo da meta"
     diferenca = meta.get("diferenca", meta["vendas_periodo"] - meta["meta_vendas"])
     lado = "acima" if diferenca >= 0 else "abaixo"
     return (
-        f"No histórico, as vendas desse período somaram {formatar_reais(meta['vendas_periodo'])}, "
+        f"{'Na referência' if com_referencia else 'No histórico'}, as vendas desse período somaram "
+        f"{formatar_reais(meta['vendas_periodo'])}, "
         f"{_pct(pct)} da meta de {formatar_reais(meta['meta_vendas'])} ({comparacao}). "
         f"São {formatar_reais(abs(diferenca))} {lado} da meta."
     )

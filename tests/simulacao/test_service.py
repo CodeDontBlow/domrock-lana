@@ -1,3 +1,5 @@
+from datetime import date
+
 import pytest
 
 from app.simulacao.bases import BasesSimulacao
@@ -264,3 +266,88 @@ def test_trilha_diz_quando_valeu_o_calculo_de_referencia() -> None:
     assert "divergiu do cálculo de referência em 2 tentativas" in trilha.passos[2].descricao
     assert trilha.passos[4].descricao.startswith("5 conferências passaram:")
 
+
+
+# ADR-006: campanha futura calculada sobre a competência de referência, sem previsão.
+HOJE = date(2026, 11, 20)
+BLACK_FRIDAY_2026 = {**VALORES, "periodo": {"data_inicio": "2026-11-24", "data_fim": "2026-11-30"}}
+
+
+def _simulador_futuro(fonte: FakeFonteBases | None = None) -> SimuladorCampanha:
+    return SimuladorCampanha(
+        fonte or FakeFonteBases(bases_pequenas()), GeradorCodigoModelo(), SubprocessRunner(), FakeExplicador(),
+        hoje=lambda: HOJE,
+    )
+
+
+def _black_friday_2026(**valores: object) -> ResultadoSimulacao:
+    regra = montar_regra({**BLACK_FRIDAY_2026, **valores}, "bf 2026", "draft-1")
+    return _simulador_futuro().simular(regra)
+
+
+def test_futuro_com_crescimento_zero_custa_o_mesmo_que_a_referencia() -> None:
+    # Critério 1: Black Friday 2026 sobre nov/2025 com 0% = Black Friday 2025.
+    historica = _simulador_futuro().simular(montar_regra(VALORES, "bf 2025", "draft-1"))
+
+    futura = _black_friday_2026(competencia_referencia="2025-11", pct_crescimento=0)
+
+    assert futura.totais == historica.totais
+    assert futura.totais.diferenca == 13.0
+    assert futura.meta.vendas_periodo == historica.meta.vendas_periodo == 1300.0
+    assert futura.competencias == ["2026-11"]
+    assert historica.referencia is None
+
+
+def test_futuro_com_crescimento_aumenta_venda_e_custo_na_mesma_proporcao() -> None:
+    # Critério 2: com 10%, venda e custo sobem 10%.
+    base = _black_friday_2026(competencia_referencia="2025-11", pct_crescimento=0)
+
+    com_crescimento = _black_friday_2026(competencia_referencia="2025-11", pct_crescimento=10)
+
+    assert com_crescimento.totais.diferenca == pytest.approx(base.totais.diferenca * 1.1, abs=0.01)
+    assert com_crescimento.meta.vendas_periodo == pytest.approx(base.meta.vendas_periodo * 1.1, abs=0.01)
+    assert com_crescimento.totais.baseline == pytest.approx(base.totais.baseline * 1.1, abs=0.01)
+    _conferir_soma_por_pessoa(com_crescimento)
+
+
+def test_futuro_le_a_referencia_e_registra_competencia_e_crescimento_na_trilha() -> None:
+    fonte = FakeFonteBases(bases_pequenas())
+    regra = montar_regra({**BLACK_FRIDAY_2026, "competencia_referencia": "2025-11", "pct_crescimento": 10},
+                         "bf 2026", "draft-1")
+
+    resultado = _simulador_futuro(fonte).simular(regra)
+
+    assert fonte.competencias_pedidas == [["2025-11"]]
+    esperado = "Calculado sobre nov/2025 (referência), crescimento de 10%."
+    assert resultado.referencia.descricao == esperado
+    assert resultado.referencia.competencias_lidas == ["2025-11"]
+    assert resultado.trilha.premissas[0] == esperado
+    carregar = resultado.trilha.passos[0]
+    assert carregar.competencias == ["2025-11"]
+    assert carregar.descricao.startswith("Bases de nov/2025 (referência), deslocadas para nov/2026")
+    assert carregar.descricao.endswith(esperado)
+
+
+def test_futuro_sem_referencia_e_recusado_com_a_sugestao() -> None:
+    # Critério 3 no simulador: sem referência, nada é calculado e o erro traz a sugestão.
+    with pytest.raises(RegraInvalidaError) as erro:
+        _black_friday_2026()
+
+    assert any("sugestão: 2025-11" in e for e in erro.value.erros)
+
+
+def test_futuro_sem_base_da_referencia_pede_outro_mes() -> None:
+    with pytest.raises(SimulacaoFalhouError) as erro:
+        _black_friday_2026(competencia_referencia="2025-10")
+
+    assert erro.value.etapa == "dados" and "(referência)" in erro.value.mensagem
+
+
+def test_historico_ignora_referencia_e_crescimento() -> None:
+    sem = _simulador_futuro().simular(montar_regra(VALORES, "bf 2025", "draft-1"))
+
+    com = _simulador_futuro().simular(
+        montar_regra({**VALORES, "competencia_referencia": "2024-11", "pct_crescimento": 50}, "bf 2025", "draft-1"),
+    )
+
+    assert com.totais == sem.totais and com.referencia is None

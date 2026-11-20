@@ -90,6 +90,19 @@ class CenarioAlternativo(BaseModel):
     cabe_no_orcamento: bool | None
 
 
+class ReferenciaSimulacao(BaseModel):
+    """Campanha futura calculada sobre um mês histórico (ADR-006); None no período histórico.
+
+    `competencias_lidas`: as competências da base usadas, deslocadas para o período da campanha.
+    `descricao`: o texto da trilha. Ex.: "Calculado sobre nov/2025 (referência), crescimento de 10%."
+    """
+
+    competencia_referencia: str
+    pct_crescimento: float
+    competencias_lidas: list[str]
+    descricao: str
+
+
 class TrilhaSimulacao(BaseModel):
     """Trilha da simulação (2.2). Preenchido com modelo, tentativas, premissas, passos (A6-70) e campanhas (A6-74)."""
 
@@ -152,3 +165,4 @@ class ResultadoSimulacao(BaseModel):
     apuracao_por_pessoa: list[ApuracaoPessoa] = Field(default_factory=list)
     regras_base_aplicadas: list[RegraBaseAplicada] = Field(default_factory=list)
     pessoas_no_piso: int = 0
+    referencia: ReferenciaSimulacao | None = None
