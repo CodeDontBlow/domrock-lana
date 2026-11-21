@@ -35,13 +35,13 @@ def registrar_solicitacao_correcao(
 
     Use SOMENTE quando o usuário solicitar alteração cadastral ou correção na base de dados,
     e após confirmar na base (via `consultar_banco`) que a matrícula existe e que os dados atuais
-    daquela competência foram checados. Se os dados não coincidirem com o banco, avise o usuário e
+    daquela competência foram checados. Se os dados que você checar não coincidirem com o banco, avise o usuário e
     NÃO abra solicitação.
     NUNCA use esta ferramenta para regras de campanhas de comissionamento (use registrar_parametros_regra).
 
     FLUXO HITL (Human-In-The-Loop) E REFINAMENTO:
     - Esta ferramenta NÃO executa o SQL no banco. Ela gera uma proposta de solicitação que é exibida
-      no componente HITL do chat. A solicitação NÃO é enviada imediatamente aos supervisores: ela permanece
+      no componente HITL no final da sua mensagem. A solicitação NÃO é enviada imediatamente aos supervisores: ela permanece
       aguardando o usuário revisar e clicar no botão para enviar.
     - Se o usuário pedir para alterar qualquer parâmetro da solicitação pelo chat (ex: 'mude a loja para 8',
       'troque o motivo', 'mude para outubro'), chame esta ferramenta NOVAMENTE com TODOS os parâmetros conhecidos,
