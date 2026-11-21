@@ -25,7 +25,10 @@ def test_orcamento_e_opcional_e_nao_entra_nos_faltantes() -> None:
 
     orcamento = next(p for p in regra.parametros if p.key == "orcamento_limite")
     assert regra.faltantes == [] and orcamento.required is False and orcamento.value is None
-    assert all(p.required for p in regra.parametros if p.key != "orcamento_limite")
+    # Referência e crescimento (ADR-006) também são opcionais: só valem no período futuro.
+    opcionais = {"orcamento_limite", "competencia_referencia", "pct_crescimento"}
+    assert all(p.required for p in regra.parametros if p.key not in opcionais)
+    assert not any(p.required for p in regra.parametros if p.key in opcionais)
 
 
 def test_ler_parametros_sem_orcamento_devolve_none() -> None:

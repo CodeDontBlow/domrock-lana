@@ -8,6 +8,7 @@ from langchain_core.tools import tool
 from app.tools.dtos import calcular_tempo_ms
 from app.tools.regra_tool.dtos import RegraToolResult
 from app.tools.regra_tool.parametros import montar_regra
+from app.tools.regra_tool.referencia import completar_referencia
 
 NOME_TOOL_REGRA = "registrar_parametros_regra"
 
@@ -24,6 +25,8 @@ def registrar_parametros_regra(
     cargos_alvo: list[str] | None = None,
     meta_vendas: float | None = None,
     orcamento_limite: float | None = None,
+    competencia_referencia: str | None = None,
+    pct_crescimento: float | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """
     Registra os parâmetros de uma regra de campanha de comissionamento descrita pelo usuário.
@@ -32,12 +35,15 @@ def registrar_parametros_regra(
     o usuário disse; NUNCA invente nem assuma valores padrão. Deixe ausente o que não foi dito.
     A resposta traz `faltantes`: pergunte ao usuário por cada um deles. Quando o usuário
     completar ou alterar algo, chame de novo com TODOS os valores já conhecidos da conversa.
+    Se a resposta trouxer `referencia_sugerida`, o período é futuro e será calculado sobre esse
+    mês histórico: peça ao usuário que confirme a referência e pergunte o % de crescimento.
 
     Args:
         comando_original: A frase do usuário que descreve a regra.
         explicacao: Frase curta para o usuário, começando com verbo no gerúndio, do que você está
             registrando (ex.: "Registrando a campanha de +1% para todas as marcas de 24 a 30/11").
-        data_inicio: Início da vigência em YYYY-MM-DD. Os dados disponíveis são de 2025.
+        data_inicio: Início da vigência em YYYY-MM-DD, no ano que o usuário disser. Pode ser
+            futuro (ex.: Black Friday 2026): nunca troque o ano para caber nos dados de 2025.
         data_fim: Fim da vigência em YYYY-MM-DD.
         pct_acrescimo: Acréscimo em pontos percentuais sobre a comissão (+1% -> 1.0).
         marcas_alvo: Códigos de marca: "10" PRETO, "20" BRANCO, "30" AZUL, "40" VERMELHO,
@@ -48,6 +54,10 @@ def registrar_parametros_regra(
         meta_vendas: Meta financeira de vendas da campanha em R$.
         orcamento_limite: Opcional. Orçamento máximo do incentivo (custo extra de comissão) em R$.
             Passe só se o usuário disser; nunca pergunte por ele.
+        competencia_referencia: Só para período futuro. Mês histórico (YYYY-MM) sobre o qual a
+            campanha é calculada; passe só depois que o usuário confirmar ou escolher.
+        pct_crescimento: Só para período futuro. Crescimento sobre a referência, em % aplicado
+            à venda e ao custo (10% -> 10.0). Se o usuário não quiser informar, passe 0.
     """
     inicio = time.perf_counter()
     try:
@@ -59,7 +69,10 @@ def registrar_parametros_regra(
             "cargos_alvo": cargos_alvo,
             "meta_vendas": meta_vendas,
             "orcamento_limite": orcamento_limite,
+            "competencia_referencia": competencia_referencia,
+            "pct_crescimento": pct_crescimento,
         }
+        valores, referencia_sugerida = completar_referencia(valores)
         regra = montar_regra(valores, comando_original, f"draft-{uuid4().hex[:8]}")
         contrato = regra.model_dump(mode="json")
         comps = sorted(list({c[:7] for c in [data_inicio, data_fim] if c and len(c) >= 7}))
@@ -73,6 +86,7 @@ def registrar_parametros_regra(
             sql=None,
             faltantes=regra.faltantes,
             regra=contrato,
+            referencia_sugerida=referencia_sugerida,
         )
         return json.dumps(resultado.model_dump(mode="json"), ensure_ascii=False), contrato
     except Exception:

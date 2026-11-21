@@ -116,3 +116,30 @@ def competencias_do_periodo(inicio: date, fim: date) -> list[str]:
     """Meses tocados pelo período. Ex.: (2025-11-24, 2025-12-05) -> ["2025-11", "2025-12"]"""
     meses = pd.period_range(start=inicio, end=fim, freq="M")
     return [str(mes) for mes in meses]
+
+
+def deslocar_bases(bases: BasesSimulacao, meses: int, fator: float) -> BasesSimulacao:
+    """As bases da competência de referência no período da campanha (ADR-006): sem previsão.
+
+    Datas e competências andam `meses` (o dia é mantido, ou vira o último do mês mais curto) e cada
+    venda é multiplicada por `fator` (1 + crescimento). Admissão e demissão andam junto, para as
+    regras 5c e 5d darem o mesmo resultado da referência.
+    Ex.: deslocar_bases(bases_nov25, 12, 1.1).vendas["data_venda"] -> datas de nov/2026, vendas +10%
+    """
+    rh = _deslocar(bases.rh, meses)
+    vendas = _deslocar(bases.vendas, meses)
+    vendas["vlr_venda"] = vendas["vlr_venda"] * fator
+    intercorrencias = _deslocar(bases.intercorrencias, meses, colunas=("data_inicio", "data_fim"))
+    return BasesSimulacao(rh=rh, vendas=vendas, comissoes=bases.comissoes, intercorrencias=intercorrencias)
+
+
+def _deslocar(tabela: pd.DataFrame, meses: int, colunas: tuple[str, ...] = COLUNAS_DATA) -> pd.DataFrame:
+    copia = tabela.copy()
+    for coluna in colunas:
+        if coluna in copia.columns:
+            copia[coluna] = pd.to_datetime(copia[coluna]) + pd.DateOffset(months=meses)
+    if "competencia" in copia.columns:
+        copia["competencia"] = [
+            str(pd.Period(c, freq="M") + meses) for c in copia["competencia"]
+        ]
+    return copia
