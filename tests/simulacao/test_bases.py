@@ -14,6 +14,7 @@ from app.simulacao.bases import (
     SQL_INTERCORRENCIAS_PENDENTES,
     TABELAS_DAS_BASES,
     _consultar_intercorrencias,
+    deslocar_bases,
 )
 from tests.fakes import bases_pequenas
 
@@ -266,3 +267,36 @@ def test_consultar_intercorrencias_emite_warning_apenas_para_datas_invalidas(
 
     assert len(resultado_validas) == 4
     assert caplog.records == []
+
+
+def test_deslocar_bases_leva_a_referencia_ao_periodo_e_aplica_o_crescimento() -> None:
+    # ADR-006: nov/2025 vira nov/2026 com +10% nas vendas; nada mais muda.
+    bases = bases_pequenas()
+
+    deslocadas = deslocar_bases(bases, 12, 1.1)
+
+    assert set(deslocadas.rh["competencia"]) == set(deslocadas.vendas["competencia"]) == {"2026-11"}
+    assert list(deslocadas.vendas["data_venda"]) == list(bases.vendas["data_venda"] + pd.DateOffset(years=1))
+    assert list(deslocadas.rh["data_admissao"].dt.year) == [2021] * 3
+    assert list(deslocadas.vendas["vlr_venda"]) == pytest.approx([1100.0, 550.0, 220.0, 880.0])
+    assert deslocadas.comissoes.equals(bases.comissoes)
+    assert list(bases.vendas["vlr_venda"]) == [1000.0, 500.0, 200.0, 800.0]  # a referência fica intacta
+
+
+def test_deslocar_bases_mantem_as_intercorrencias_pendentes() -> None:
+    # Regressão: campanha futura (ADR-006) perdia o aviso de pendentes da referência (A6-108).
+    bases = BasesSimulacao(
+        rh=bases_pequenas().rh, vendas=bases_pequenas().vendas, comissoes=bases_pequenas().comissoes,
+        intercorrencias_pendentes=2,
+    )
+
+    assert deslocar_bases(bases, 12, 1.0).intercorrencias_pendentes == 2
+
+
+def test_deslocar_bases_usa_o_ultimo_dia_do_mes_mais_curto() -> None:
+    bases = bases_pequenas()
+    bases.vendas.loc[0, "data_venda"] = pd.Timestamp("2025-01-31")
+
+    deslocadas = deslocar_bases(bases, 1, 1.0)
+
+    assert deslocadas.vendas.loc[0, "data_venda"] == pd.Timestamp("2025-02-28")

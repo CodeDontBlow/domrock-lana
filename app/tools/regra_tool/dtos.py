@@ -11,6 +11,8 @@ class RegraToolResult(ToolResultBase):
 
     faltantes: list[str] = []
     regra: dict[str, Any] = {}
+    # Período futuro sem referência informada (ADR-006): a competência sugerida, que a Lana confirma.
+    referencia_sugerida: str | None = None
 
 
 

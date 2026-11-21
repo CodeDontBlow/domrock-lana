@@ -15,7 +15,7 @@ import pandas as pd
 
 from app.core.trilha import PassoTrilha, competencias_por_extenso
 from app.simulacao.bases import SQL_DAS_BASES, TABELAS_DAS_BASES, BasesSimulacao
-from app.simulacao.dtos import TotaisSimulacao, TrilhaSimulacao
+from app.simulacao.dtos import ReferenciaSimulacao, TotaisSimulacao, TrilhaSimulacao
 from app.simulacao.resumo import gerar_premissas, vendas_do_periodo
 from app.simulacao.texto_humano import formatar_reais
 from app.simulacao.vigencia import HistoricoComissao
@@ -61,6 +61,8 @@ class ExecucaoSimulada:
     totais: TotaisSimulacao
     campanhas: list[HistoricoComissao]
     tempos: dict[str, int]
+    # Período futuro (ADR-006): a competência de referência lida e o crescimento aplicado.
+    referencia: ReferenciaSimulacao | None = None
 
 
 def montar_trilha_simulacao(execucao: ExecucaoSimulada) -> TrilhaSimulacao:
@@ -70,9 +72,11 @@ def montar_trilha_simulacao(execucao: ExecucaoSimulada) -> TrilhaSimulacao:
     ]
     for passo in passos:
         passo.tempo_ms = execucao.tempos.get(passo.ferramenta, 0)
+    premissas = gerar_premissas(execucao.parametros, execucao.bases.intercorrencias_pendentes)
+    if execucao.referencia:
+        premissas.insert(0, execucao.referencia.descricao)
     return TrilhaSimulacao(
-        modelo=execucao.modelo, tentativas=execucao.tentativas,
-        premissas=gerar_premissas(execucao.parametros, execucao.bases.intercorrencias_pendentes),
+        modelo=execucao.modelo, tentativas=execucao.tentativas, premissas=premissas,
         passos=passos, campanhas=execucao.campanhas,
     )
 
@@ -82,13 +86,20 @@ def _carregar_bases(execucao: ExecucaoSimulada) -> PassoTrilha:
     pessoas = int(bases.rh["matricula"].nunique())
     vendas = len(vendas_do_periodo(bases.vendas, parametros))
     periodo = f"{parametros.data_inicio:%d/%m} a {parametros.data_fim:%d/%m}"
+    referencia = execucao.referencia
+    # A trilha registra as competências que o SQL leu: as da referência, no período futuro.
+    lidas = referencia.competencias_lidas if referencia else execucao.competencias
+    origem = (f"{competencias_por_extenso(lidas)} (referência), deslocadas para "
+              f"{competencias_por_extenso(execucao.competencias)}") if referencia else competencias_por_extenso(lidas)
     descricao = (
-        f"Bases de {competencias_por_extenso(execucao.competencias)}: {pessoas} pessoas no RH, "
+        f"Bases de {origem}: {pessoas} pessoas no RH, "
         f"{vendas} vendas de {periodo}, {len(bases.comissoes)} linhas de % por marca e cargo"
     )
+    if referencia:
+        descricao += f". {referencia.descricao}"
     return PassoTrilha(
         ordem=1, ferramenta="carregar_bases", descricao=descricao, tabelas_acessadas=list(TABELAS_DAS_BASES),
-        competencias=execucao.competencias, sql_executado=SQL_DAS_BASES,
+        competencias=lidas, sql_executado=SQL_DAS_BASES,
         filtros=f"vendas de {parametros.data_inicio:%d/%m/%Y} a {parametros.data_fim:%d/%m/%Y}; "
                 f"marcas {', '.join(parametros.marcas_alvo)}",
         registros_retornados=len(bases.rh) + len(bases.vendas) + len(bases.comissoes),
