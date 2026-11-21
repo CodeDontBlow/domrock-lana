@@ -74,14 +74,21 @@ def avaliar_orcamento(totais: TotaisSimulacao, orcamento_limite: float | None) -
     )
 
 
+def mascara_vendas_periodo(vendas: pd.DataFrame, parametros: ParametrosSimulacao) -> pd.Series:
+    """Máscara booleana das vendas no período e marcas da campanha (A6-93).
+
+    Ex.: mascara_vendas_periodo(bases.vendas, parametros_black_friday()).sum() -> 2
+    """
+    inicio, fim = pd.Timestamp(parametros.data_inicio), pd.Timestamp(parametros.data_fim)
+    return vendas["data_venda"].between(inicio, fim) & vendas["cod_marca"].isin(parametros.marcas_alvo)
+
+
 def vendas_do_periodo(vendas: pd.DataFrame, parametros: ParametrosSimulacao) -> pd.DataFrame:
     """Vendas das marcas da campanha entre o início e o fim, não do mês inteiro (A6-70: "721 vendas no período").
 
     Ex.: len(vendas_do_periodo(bases.vendas, parametros_black_friday())) -> 721 no banco de 2025
     """
-    inicio, fim = pd.Timestamp(parametros.data_inicio), pd.Timestamp(parametros.data_fim)
-    no_periodo = vendas["data_venda"].between(inicio, fim) & vendas["cod_marca"].isin(parametros.marcas_alvo)
-    return vendas.loc[no_periodo]
+    return vendas.loc[mascara_vendas_periodo(vendas, parametros)]
 
 
 def avaliar_meta(vendas: pd.DataFrame, parametros: ParametrosSimulacao) -> AtingimentoMeta:

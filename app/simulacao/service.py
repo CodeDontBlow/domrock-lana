@@ -17,9 +17,10 @@ from app.simulacao.vigencia import (
     CampanhaContexto, calcular_baseline_vigente, calcular_periodos, detectar_conflitos, fontes_da_vigente,
 )
 from app.simulacao.cenarios import SimularCusto, propor_cenarios
-from app.simulacao.dtos import ReferenciaSimulacao, ResultadoSimulacao
+from app.simulacao.dtos import AtingimentoMeta, ReferenciaSimulacao, ResultadoSimulacao, SimulacaoNaMeta
 from app.simulacao.especificacao import CatalogoEspecificacao
 from app.simulacao.explicacao import Explicador
+from app.simulacao.na_meta import escalar_vendas, fator_na_meta, montar_simulacao_na_meta
 from app.simulacao.resumo import (
     RESSALVAS, avaliar_meta, avaliar_orcamento, avaliar_retorno, calcular_totais, maiores_lojas, medir_impacto,
     quebrar_por,
@@ -35,7 +36,8 @@ from app.tools.regra_tool.referencia import ReferenciaCalculo, ler_referencia
 LINHAS_AMOSTRA = 10
 # Sem "retorno": a explicação só volta a falar dele na Sprint 3 (decisão do PO, 26/10).
 CAMPOS_EXPLICACAO = {
-    "totais", "por_marca", "por_cargo", "orcamento", "meta", "impacto", "maiores_lojas", "cenarios", "referencia",
+    "totais", "por_marca", "por_cargo", "orcamento", "meta", "impacto", "maiores_lojas", "cenarios", "na_meta",
+    "referencia",
 }
 
 
@@ -106,7 +108,9 @@ class SimuladorCampanha:
             conferencia = self._executar_referencia(contexto, bases, baseline)
         aprovada = self._gerar_e_executar(contexto, bases, baseline, conferencia, cronometro)
         with cronometro.medir("resumir"):
-            resultado = self._resumir(regra.rule_id, contexto, bases, baseline, aprovada, resumo_referencia)
+            resultado = self._resumir(
+                regra.rule_id, contexto, bases, baseline, aprovada, fontes, resumo_referencia,
+            )
         trilha = montar_trilha_simulacao(ExecucaoSimulada(
             parametros=parametros, competencias=competencias, bases=bases, baseline=baseline,
             modelo=_modelo_da_ia(aprovada), tentativas=aprovada.numero,
@@ -187,13 +191,15 @@ class SimuladorCampanha:
 
     def _resumir(
         self, rule_id: str, contexto: ContextoGeracao, bases: BasesSimulacao,
-        baseline: pd.DataFrame, aprovada: TentativaAprovada, referencia: ReferenciaSimulacao | None = None,
+        baseline: pd.DataFrame, aprovada: TentativaAprovada, fontes: list[CampanhaContexto],
+        referencia: ReferenciaSimulacao | None = None,
     ) -> ResultadoSimulacao:
         comparacao, parametros = aprovada.comparacao, contexto.parametros
         totais = calcular_totais(comparacao)
         orcamento = avaliar_orcamento(totais, parametros.orcamento_limite)
         por_marca = quebrar_por(comparacao, "cod_marca")
         meta = avaliar_meta(bases.vendas, parametros)
+        na_meta = self._simular_na_meta(contexto, bases, fontes, meta)
         custo_com = self._custo_com(contexto, bases, baseline)
         ajustes = calcular_ajustes(bases.rh, bases.intercorrencias)
         resultado = ResultadoSimulacao(
@@ -206,10 +212,32 @@ class SimuladorCampanha:
             tentativas=aprovada.numero, explicacao="", observacao=aprovada.observacao,
             apuracao_por_pessoa=montar_apuracao_por_pessoa(comparacao, ajustes),
             regras_base_aplicadas=contar_regras_aplicadas(ajustes),
-            pessoas_no_piso=contar_pessoas_no_piso(comparacao, ajustes), referencia=referencia,
+            pessoas_no_piso=contar_pessoas_no_piso(comparacao, ajustes),
+            na_meta=na_meta, referencia=referencia,
         )
         resumo = resultado.model_dump(include=CAMPOS_EXPLICACAO)
         return resultado.model_copy(update={"explicacao": self._explicador.explicar(resumo)})
+
+    def _simular_na_meta(
+        self, contexto: ContextoGeracao, bases: BasesSimulacao,
+        fontes: list[CampanhaContexto], meta: AtingimentoMeta,
+    ) -> SimulacaoNaMeta | None:
+        """Simula a campanha com vendas escaladas até a meta informada (A6-93)."""
+        fator = fator_na_meta(meta)
+        if fator is None:
+            return None
+        bases_escaladas = escalar_vendas(bases, contexto.parametros, fator)
+        try:
+            baseline_escalado = calcular_baseline_vigente(bases_escaladas, fontes)
+            codigo = self._recalculo.gerar(contexto, None)
+            comparacao = self._executar(codigo, contexto, bases_escaladas, baseline_escalado)
+        except (ExecucaoFalhouError, AssercaoViolada):
+            # A simulação na meta é acessória: se falhar, a simulação segue sem ela (A6-93).
+            return None
+        vendas_na_meta = avaliar_meta(bases_escaladas.vendas, contexto.parametros).vendas_periodo
+        return montar_simulacao_na_meta(
+            fator, vendas_na_meta, calcular_totais(comparacao), contexto.parametros.orcamento_limite,
+        )
 
     def _custo_com(self, contexto: ContextoGeracao, bases: BasesSimulacao, baseline: pd.DataFrame) -> SimularCusto:
         """Simula de novo, com o código determinístico, a mesma regra com outros parâmetros."""

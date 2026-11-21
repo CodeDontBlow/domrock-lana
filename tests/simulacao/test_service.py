@@ -25,8 +25,12 @@ CODIGO_QUEBRADO = "def aplicar_regra(bases, apuracao_base, competencias):\n    r
 def _simulador(
     gerador: FakeGeradorSequencial | FakeGeradorLlmIndisponivel,
     bases: BasesSimulacao | None = None,
+    recalculo: FakeGeradorSequencial | None = None,
 ) -> SimuladorCampanha:
-    return SimuladorCampanha(FakeFonteBases(bases or bases_pequenas()), gerador, SubprocessRunner(), FakeExplicador())
+    return SimuladorCampanha(
+        FakeFonteBases(bases or bases_pequenas()), gerador, SubprocessRunner(), FakeExplicador(),
+        recalculo=recalculo,
+    )
 
 
 def _conferir_soma_por_pessoa(resultado: ResultadoSimulacao) -> None:
@@ -267,7 +271,6 @@ def test_trilha_diz_quando_valeu_o_calculo_de_referencia() -> None:
     assert trilha.passos[4].descricao.startswith("5 conferências passaram:")
 
 
-
 # ADR-006: campanha futura calculada sobre a competência de referência, sem previsão.
 HOJE = date(2026, 11, 20)
 BLACK_FRIDAY_2026 = {**VALORES, "periodo": {"data_inicio": "2026-11-24", "data_fim": "2026-11-30"}}
@@ -351,3 +354,65 @@ def test_historico_ignora_referencia_e_crescimento() -> None:
     )
 
     assert com.totais == sem.totais and com.referencia is None
+
+
+def test_simular_com_meta_acima_da_venda_calcula_na_meta() -> None:
+    # Vendas do período em bases_pequenas somam 1.300,00; com meta de 2.600,00 o fator é 2.0 (A6-93).
+    valores = {**VALORES, "meta_vendas": 2600.0, "orcamento_limite": 30.0}
+    gerador = FakeGeradorSequencial([fonte_modelo(parametros_black_friday(**valores))])
+
+    resultado = _simulador(gerador).simular(montar_regra(valores, "bf", "draft-1"))
+
+    assert resultado.na_meta is not None
+    assert resultado.na_meta.fator == 2.0
+    assert resultado.na_meta.vendas_na_meta == 2600.0
+    assert resultado.na_meta.comissao_sem_campanha > resultado.totais.baseline
+    assert resultado.na_meta.custo_adicional == round(
+        resultado.na_meta.comissao_com_campanha - resultado.na_meta.comissao_sem_campanha, 2
+    )
+    assert resultado.na_meta.cabe_no_orcamento is True
+
+
+def test_simular_com_meta_acima_da_venda_e_orcamento_estourado() -> None:
+    # Com custo adicional de 26,00 e orçamento limite de 20,00, não cabe no orçamento (A6-93).
+    valores = {**VALORES, "meta_vendas": 2600.0, "orcamento_limite": 20.0}
+    gerador = FakeGeradorSequencial([fonte_modelo(parametros_black_friday(**valores))])
+
+    resultado = _simulador(gerador).simular(montar_regra(valores, "bf", "draft-1"))
+
+    assert resultado.na_meta is not None
+    assert resultado.na_meta.cabe_no_orcamento is False
+
+
+def test_simular_com_meta_acima_da_venda_sem_orcamento() -> None:
+    # Sem orçamento definido, cabe_no_orcamento deve ser None (A6-93).
+    valores = {**VALORES, "meta_vendas": 2600.0, "orcamento_limite": None}
+    gerador = FakeGeradorSequencial([fonte_modelo(parametros_black_friday(**valores))])
+
+    resultado = _simulador(gerador).simular(montar_regra(valores, "bf", "draft-1"))
+
+    assert resultado.na_meta is not None
+    assert resultado.na_meta.cabe_no_orcamento is None
+
+
+def test_simular_com_meta_abaixo_ou_igual_a_venda_nao_gera_na_meta() -> None:
+    # Vendas no período somam 1.300,00; meta de 1.000,00 já foi superada (A6-93).
+    valores = {**VALORES, "meta_vendas": 1000.0}
+    gerador = FakeGeradorSequencial([fonte_modelo(parametros_black_friday(**valores))])
+
+    resultado = _simulador(gerador).simular(montar_regra(valores, "bf", "draft-1"))
+
+    assert resultado.na_meta is None
+
+
+def test_simular_na_meta_com_falha_no_recalculo_mantem_resultado_sem_na_meta() -> None:
+    # Falha no recálculo não derruba a simulação principal; na_meta fica None (A6-93).
+    valores = {**VALORES, "meta_vendas": 2600.0}
+    gerador = FakeGeradorSequencial([fonte_modelo(parametros_black_friday(**valores))])
+    simulador = _simulador(gerador, recalculo=FakeGeradorSequencial([CODIGO_QUEBRADO]))
+
+    resultado = simulador.simular(montar_regra(valores, "bf", "draft-1"))
+
+    assert resultado.totais.diferenca == 13.0
+    assert resultado.na_meta is None
+
