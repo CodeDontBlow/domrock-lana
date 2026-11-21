@@ -1,12 +1,15 @@
 from datetime import date
 
+import pandas as pd
 import pytest
 
 from app.simulacao.bases import BasesSimulacao
 from app.simulacao.dtos import ResultadoSimulacao
 from app.simulacao.service import SimulacaoFalhouError, SimuladorCampanha
+from app.tools.code_tool.dtos import ContextoGeracao
 from app.tools.code_tool.gerador import GeradorCodigoModelo
 from app.tools.code_tool.runner import SubprocessRunner
+from app.tools.regra_tool.dtos import ParametrosSimulacao
 from app.tools.regra_tool.parametros import RegraInvalidaError, montar_regra
 from tests.fakes import (
     FakeExplicador, FakeFonteBases, FakeGeradorLlmIndisponivel, FakeGeradorSequencial,
@@ -269,6 +272,99 @@ def test_trilha_diz_quando_valeu_o_calculo_de_referencia() -> None:
 
     assert "divergiu do cálculo de referência em 2 tentativas" in trilha.passos[2].descricao
     assert trilha.passos[4].descricao.startswith("5 conferências passaram:")
+
+
+def test_gherkin_matric58_intercorrencia_da_especificacao_entra_na_apuracao_julho() -> None:
+    rh = pd.DataFrame([{
+        "matricula": "MATRIC-58", "competencia": "2025-07", "cod_loja": "1", "cod_marca": "10",
+        "cod_cargo": "100", "data_admissao": pd.Timestamp("2020-01-01"), "data_demissao": pd.NaT,
+    }])
+    vendas = pd.DataFrame([{
+        "matricula": "MATRIC-58", "competencia": "2025-07", "data_venda": pd.Timestamp("2025-07-05"),
+        "vlr_venda": 100000.0, "cod_loja": "1", "cod_marca": "10", "cod_cargo": "100",
+    }])
+    comissoes = pd.DataFrame([{"cod_marca": "10", "cod_cargo": "100", "pct_comiss": 2.0}])
+    inter = pd.DataFrame([{
+        "matricula": "MATRIC-58", "tipo": "afastamento",
+        "data_inicio": pd.Timestamp("2025-07-10"), "data_fim": pd.Timestamp("2025-07-25"),
+    }])
+    bases = BasesSimulacao(rh=rh, vendas=vendas, comissoes=comissoes, intercorrencias=inter)
+
+    valores_julho = {
+        "periodo": {"data_inicio": "2025-07-01", "data_fim": "2025-07-31"},
+        "pct_acrescimo": 1.0, "marcas_alvo": ["10"], "cargos_alvo": ["100"],
+        "meta_vendas": 50000.0, "orcamento_limite": 5000.0,
+    }
+    parametros = ParametrosSimulacao(
+        data_inicio=date(2025, 7, 1), data_fim=date(2025, 7, 31), pct_acrescimo=1.0,
+        marcas_alvo=["10"], cargos_alvo=["100"], meta_vendas=50000.0, orcamento_limite=5000.0,
+    )
+    fonte = GeradorCodigoModelo().gerar(ContextoGeracao(parametros, ["2025-07"], {}), None).fonte
+
+    resultado = _simulador(FakeGeradorSequencial([fonte]), bases=bases).simular(
+        montar_regra(valores_julho, "jul-58", "draft-58")
+    )
+
+    # Base 5a: 100.000 * 2% = 2.000; 5f (16 dias afastado, 15 trabalhados, teto 15 remunerados) -> fator 30/15 = 2 -> 4.000.
+    # Simulado (+1%): 100.000 * 3% = 3.000 * 2 = 6.000.
+    pessoa = resultado.apuracao_por_pessoa[0]
+    assert pessoa.matricula == "MATRIC-58"
+    assert pessoa.comissao_atual == 4000.0
+    assert pessoa.comissao_com_campanha == 6000.0
+    assert any("5f — afastamento de 10/07 a 25/07: 16 dias, 15 remunerados" in r.descricao for r in pessoa.detalhamento)
+    assert [(r.regra, r.pessoas) for r in resultado.regras_base_aplicadas] == [("5e_5f", 1)]
+    _conferir_soma_por_pessoa(resultado)
+
+
+def test_gherkin_intercorrencia_pendente_nao_entra_e_gera_aviso() -> None:
+    gerador = FakeGeradorSequencial([fonte_modelo(parametros_black_friday())])
+    base_sem_pendente = bases_pequenas()
+    base_com_pendente = BasesSimulacao(
+        rh=base_sem_pendente.rh, vendas=base_sem_pendente.vendas, comissoes=base_sem_pendente.comissoes,
+        intercorrencias_pendentes=1,
+    )
+
+    sem_pendente = _simulador(FakeGeradorSequencial([fonte_modelo(parametros_black_friday())]), bases=base_sem_pendente).simular(
+        montar_regra(VALORES, "bf", "draft-0")
+    )
+    com_pendente = _simulador(gerador, bases=base_com_pendente).simular(
+        montar_regra(VALORES, "bf", "draft-1")
+    )
+
+    aviso = "1 intercorrência pendente de aprovação não foi considerada"
+    assert com_pendente.totais == sem_pendente.totais
+    assert aviso in com_pendente.ressalvas
+    assert aviso in com_pendente.explicacao
+    assert aviso in com_pendente.trilha.premissas
+    assert aviso not in sem_pendente.ressalvas
+
+
+def test_simular_integra_demissao_5d_afastamento_5e_ferias_5g_e_ignora_provisorias_nulas() -> None:
+    base = bases_pequenas()
+    inter = pd.DataFrame([
+        {"matricula": "M1", "tipo": "ferias", "data_inicio": pd.Timestamp("2025-11-01"), "data_fim": pd.Timestamp("2025-11-10")},
+        {"matricula": "M2", "tipo": "demissao", "data_inicio": pd.Timestamp("2025-11-15"), "data_fim": pd.NaT},
+        {"matricula": "G1", "tipo": "afastamento", "data_inicio": pd.Timestamp("2025-11-01"), "data_fim": pd.Timestamp("2025-11-10")},
+        {"matricula": "G1", "tipo": "cobertura_loja", "data_inicio": pd.NaT, "data_fim": pd.NaT},
+        {"matricula": "M1", "tipo": "licenca_maternidade", "data_inicio": pd.Timestamp("2025-11-02"), "data_fim": pd.NaT},
+    ])
+    bases = BasesSimulacao(rh=base.rh, vendas=base.vendas, comissoes=base.comissoes, intercorrencias=inter)
+
+    resultado = _simulador(
+        FakeGeradorSequencial([fonte_modelo(parametros_black_friday())]), bases=bases
+    ).simular(montar_regra(VALORES, "bf-inter", "draft-inter"))
+
+    por_mat = {p.matricula: p for p in resultado.apuracao_por_pessoa}
+    assert por_mat["M1"].comissao_atual == 20.0
+    assert por_mat["M1"].comissao_com_campanha == 23.33
+    assert any(r.regra == "5g" for r in por_mat["M1"].detalhamento)
+    assert por_mat["M2"].comissao_atual == 12.0
+    assert por_mat["M2"].comissao_com_campanha == 16.0
+    assert any(r.regra == "5d" for r in por_mat["M2"].detalhamento)
+    assert por_mat["G1"].comissao_atual == 3500.0
+    assert any(r.regra == "5e" for r in por_mat["G1"].detalhamento)
+    assert resultado.pessoas_no_piso == 1
+    _conferir_soma_por_pessoa(resultado)
 
 
 # ADR-006: campanha futura calculada sobre a competência de referência, sem previsão.

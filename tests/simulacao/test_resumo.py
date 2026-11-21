@@ -2,7 +2,8 @@ import pandas as pd
 
 from app.simulacao.dtos import AtingimentoMeta, TotaisSimulacao
 from app.simulacao.resumo import (
-    avaliar_meta, avaliar_orcamento, avaliar_retorno, maiores_lojas, medir_impacto, vendas_do_periodo,
+    RESSALVAS, avaliar_meta, avaliar_orcamento, avaliar_retorno, aviso_intercorrencias_pendentes,
+    maiores_lojas, medir_impacto, montar_ressalvas, vendas_do_periodo,
 )
 from tests.fakes import bases_pequenas, parametros_black_friday
 
@@ -83,3 +84,12 @@ def test_retorno_sem_venda_no_periodo_nao_divide_por_zero() -> None:
 def test_sem_orcamento_nao_ha_veredito() -> None:
     assert avaliar_orcamento(_totais(13.0), None) is None
     assert avaliar_orcamento(_totais(13.0), 20.0).folga == 7.0
+
+
+def test_aviso_intercorrencias_pendentes_singular_plural_e_zero() -> None:
+    assert aviso_intercorrencias_pendentes(0) is None
+    assert aviso_intercorrencias_pendentes(1) == "1 intercorrência pendente de aprovação não foi considerada"
+    assert aviso_intercorrencias_pendentes(3) == "3 intercorrências pendentes de aprovação não foram consideradas"
+    assert montar_ressalvas(0) == RESSALVAS
+    assert montar_ressalvas(1)[-1] == "1 intercorrência pendente de aprovação não foi considerada"
+    assert montar_ressalvas(2)[-1] == "2 intercorrências pendentes de aprovação não foram consideradas"

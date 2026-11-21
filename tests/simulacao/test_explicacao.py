@@ -146,6 +146,14 @@ def test_explicar_sem_orcamento_redige_com_a_llm_e_nao_cai_no_texto_padrao() -> 
     assert ExplicadorLlm(modelo).explicar(SEM_ORCAMENTO) == TEXTO_LIMPO
 
 
+def test_fatos_incluem_aviso_de_intercorrencias_pendentes() -> None:
+    aviso = "1 intercorrência pendente de aprovação não foi considerada"
+    fatos = " ".join(fatos_da_simulacao({**RESUMO, "aviso_pendentes": aviso}))
+
+    assert aviso in fatos
+    assert cliches_encontrados(aviso) == []
+
+
 def test_fatos_com_na_meta_aparecem_entre_custo_extra_e_orcamento() -> None:
     # A6-93: o fato da meta-alvo fica logo depois do custo extra e antes do orçamento.
     resumo = {

@@ -22,8 +22,8 @@ from app.simulacao.especificacao import CatalogoEspecificacao
 from app.simulacao.explicacao import Explicador
 from app.simulacao.na_meta import escalar_vendas, fator_na_meta, montar_simulacao_na_meta
 from app.simulacao.resumo import (
-    RESSALVAS, avaliar_meta, avaliar_orcamento, avaliar_retorno, calcular_totais, maiores_lojas, medir_impacto,
-    quebrar_por,
+    avaliar_meta, avaliar_orcamento, avaliar_retorno, aviso_intercorrencias_pendentes, calcular_totais,
+    maiores_lojas, medir_impacto, montar_ressalvas, quebrar_por,
 )
 from app.simulacao.trilha import Cronometro, ExecucaoSimulada, montar_trilha_simulacao
 from app.tools.code_tool.dtos import CodigoGerado, ContextoGeracao
@@ -202,21 +202,28 @@ class SimuladorCampanha:
         na_meta = self._simular_na_meta(contexto, bases, fontes, meta)
         custo_com = self._custo_com(contexto, bases, baseline)
         ajustes = calcular_ajustes(bases.rh, bases.intercorrencias)
+        aviso_pendentes = aviso_intercorrencias_pendentes(bases.intercorrencias_pendentes)
         resultado = ResultadoSimulacao(
             rule_id=rule_id, competencias=contexto.competencias, totais=totais,
             por_marca=por_marca, por_cargo=quebrar_por(comparacao, "cod_cargo"),
             orcamento=orcamento, meta=meta, retorno=avaliar_retorno(totais, meta),
             impacto=medir_impacto(comparacao), maiores_lojas=maiores_lojas(comparacao),
             cenarios=propor_cenarios(parametros, totais.diferenca, orcamento, por_marca, custo_com),
-            ressalvas=RESSALVAS, codigo=aprovada.codigo.fonte, origem_codigo=aprovada.codigo.origem,
-            tentativas=aprovada.numero, explicacao="", observacao=aprovada.observacao,
+            ressalvas=montar_ressalvas(bases.intercorrencias_pendentes), codigo=aprovada.codigo.fonte,
+            origem_codigo=aprovada.codigo.origem, tentativas=aprovada.numero, explicacao="",
+            observacao=aprovada.observacao,
             apuracao_por_pessoa=montar_apuracao_por_pessoa(comparacao, ajustes),
             regras_base_aplicadas=contar_regras_aplicadas(ajustes),
             pessoas_no_piso=contar_pessoas_no_piso(comparacao, ajustes),
             na_meta=na_meta, referencia=referencia,
         )
         resumo = resultado.model_dump(include=CAMPOS_EXPLICACAO)
-        return resultado.model_copy(update={"explicacao": self._explicador.explicar(resumo)})
+        if aviso_pendentes:
+            resumo["aviso_pendentes"] = aviso_pendentes
+        explicacao = self._explicador.explicar(resumo)
+        if aviso_pendentes and aviso_pendentes not in explicacao:
+            explicacao = f"{explicacao} {aviso_pendentes}." if explicacao else f"{aviso_pendentes}."
+        return resultado.model_copy(update={"explicacao": explicacao})
 
     def _simular_na_meta(
         self, contexto: ContextoGeracao, bases: BasesSimulacao,
