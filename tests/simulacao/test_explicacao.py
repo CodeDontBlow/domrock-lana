@@ -162,7 +162,7 @@ def test_fatos_com_na_meta_aparecem_entre_custo_extra_e_orcamento() -> None:
     fatos = " ".join(fatos_da_simulacao(resumo))
 
     texto_na_meta = (
-        "Se a venda chegar à meta de R$ 1.500.000,00, o custo extra sobe para R$ 29.512,34. "
+        "Se a venda chegar à meta de R$ 1.500.000,00, o custo extra fica em R$ 29.512,34. "
         "Esse custo cabe no orçamento."
     )
     assert texto_na_meta in fatos
@@ -203,7 +203,7 @@ def test_fatos_com_na_meta_sem_orcamento_nao_opina_sobre_orcamento() -> None:
     }
     fatos = " ".join(fatos_da_simulacao(resumo))
 
-    assert "Se a venda chegar à meta de R$ 3.000.000,00, o custo extra sobe para R$ 29.512,34." in fatos
+    assert "Se a venda chegar à meta de R$ 3.000.000,00, o custo extra fica em R$ 29.512,34." in fatos
     assert "Esse custo cabe no orçamento" not in fatos
     assert "Esse custo passa do orçamento" not in fatos
 

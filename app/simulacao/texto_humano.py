@@ -83,7 +83,7 @@ def _fato_na_meta(na_meta: dict, meta_vendas: float) -> str:
     """Fato da simulação na meta (A6-93): hipótese de atingimento da meta."""
     texto = (
         f"Se a venda chegar à meta de {formatar_reais(meta_vendas)}, "
-        f"o custo extra sobe para {formatar_reais(na_meta['custo_adicional'])}."
+        f"o custo extra fica em {formatar_reais(na_meta['custo_adicional'])}."
     )
     if na_meta.get("cabe_no_orcamento") is None:
         return texto
