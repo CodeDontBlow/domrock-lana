@@ -28,7 +28,7 @@ Fatos (use só estes números, exatamente como estão escritos):
 {fatos}
 
 Como escrever:
-- Siga a ordem dos fatos: meta, custo extra da comissão e, por último, orçamento.
+- Siga a ordem dos fatos: meta, custo extra da comissão, custo se a venda chegar à meta (só se estiver nos fatos, como hipótese "se a venda chegar", não previsão) e, por último, orçamento.
 - Se os fatos não falam de orçamento, não fale de orçamento: ele não foi informado.
 - Depois, em 1 ou 2 frases, diga o que mais pesa no custo e sugira UM dos cenários calculados
   que estão nos fatos, com o percentual e o custo dele. Nunca invente outro percentual ou valor.
