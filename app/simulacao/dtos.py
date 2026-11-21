@@ -1,3 +1,4 @@
+from typing import Any
 from pydantic import BaseModel, Field
 
 from app.core.trilha import PassoTrilha
@@ -183,3 +184,4 @@ class ResultadoSimulacao(BaseModel):
     pessoas_no_piso: int = 0
     referencia: ReferenciaSimulacao | None = None
     na_meta: SimulacaoNaMeta | None = None
+    alertas: list[dict[str, Any]] = Field(default_factory=list)

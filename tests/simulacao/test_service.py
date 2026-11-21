@@ -12,9 +12,9 @@ from app.tools.code_tool.runner import SubprocessRunner
 from app.tools.regra_tool.dtos import ParametrosSimulacao
 from app.tools.regra_tool.parametros import RegraInvalidaError, montar_regra
 from tests.fakes import (
-    FakeExplicador, FakeFonteBases, FakeGeradorLlmIndisponivel, FakeGeradorSequencial,
-    bases_com_admissao_no_mes, bases_com_afastamento_piso, bases_pequenas, fonte_modelo,
-    parametros_black_friday,
+    FakeExplicador, FakeFonteBases, FakeGeradorCodigoInseguro, FakeGeradorLlmIndisponivel,
+    FakeGeradorSempreInseguro, FakeGeradorSequencial, bases_com_admissao_no_mes,
+    bases_com_afastamento_piso, bases_pequenas, fonte_modelo, parametros_black_friday,
 )
 
 VALORES = {
@@ -274,6 +274,58 @@ def test_trilha_diz_quando_valeu_o_calculo_de_referencia() -> None:
     assert trilha.passos[4].descricao.startswith("5 conferências passaram:")
 
 
+class RunnerEspiao:
+    def __init__(self, runner: SubprocessRunner) -> None:
+        self.runner = runner
+        self.chamadas = 0
+
+    def executar(self, fonte, bases, apuracao_base, competencias):
+        self.chamadas += 1
+        return self.runner.executar(fonte, bases, apuracao_base, competencias)
+
+
+def test_duas_simulacoes_seguidas_no_mesmo_simulador_limpam_alertas() -> None:
+    fonte_valida = fonte_modelo(parametros_black_friday())
+    gerador = FakeGeradorCodigoInseguro(fonte_valida, linha=2, descricao="Import proibido: 'os'")
+    simulador = _simulador(gerador)
+
+    # 1ª simulação: tentativa insegura na 1ª chamada, válida na 2ª -> termina com alerta
+    resultado_1 = simulador.simular(montar_regra(VALORES, "bf", "draft-1"))
+    assert len(resultado_1.alertas) == 1
+    assert resultado_1.alertas[0]["tipo"] == "codigo_inseguro"
+    assert resultado_1.alertas[0]["linha"] == 2
+    assert "os" in resultado_1.alertas[0]["descricao"]
+    assert "Código Python suspeito na linha 2" in resultado_1.alertas[0]["mensagem"]
+
+    # 2ª simulação no MESMO SimuladorCampanha, sem código inseguro -> alertas == []
+    resultado_2 = simulador.simular(montar_regra(VALORES, "bf", "draft-2"))
+    assert resultado_2.alertas == []
+
+
+def test_gerador_que_so_devolve_codigo_inseguro_falha_com_etapa_seguranca_codigo() -> None:
+    gerador = FakeGeradorSempreInseguro(linha=2, descricao="Import proibido: 'os'; permitidos: ['datetime', 'math', 'numpy', 'pandas']")
+    runner_espiao = RunnerEspiao(SubprocessRunner())
+    simulador = SimuladorCampanha(FakeFonteBases(bases_pequenas()), gerador, runner_espiao, FakeExplicador())
+
+    with pytest.raises(SimulacaoFalhouError) as exc_info:
+        simulador.simular(montar_regra(VALORES, "bf", "draft-1"))
+
+    assert runner_espiao.chamadas == 0
+    assert exc_info.value.etapa == "seguranca_codigo"
+    assert exc_info.value.alertas
+    assert exc_info.value.alertas[0]["tipo"] == "codigo_inseguro"
+    assert exc_info.value.alertas[0]["linha"] == 2
+    assert "os" in exc_info.value.alertas[0]["descricao"]
+    assert "Código Python suspeito na linha 2" in exc_info.value.alertas[0]["mensagem"]
+
+
+def test_codigo_limpo_continua_rodando_normalmente_sem_alertas() -> None:
+    gerador = FakeGeradorSequencial([fonte_modelo(parametros_black_friday())])
+    simulador = _simulador(gerador)
+    resultado = simulador.simular(montar_regra(VALORES, "bf", "draft-1"))
+    assert resultado.alertas == []
+
+
 def test_gherkin_matric58_intercorrencia_da_especificacao_entra_na_apuracao_julho() -> None:
     rh = pd.DataFrame([{
         "matricula": "MATRIC-58", "competencia": "2025-07", "cod_loja": "1", "cod_marca": "10",
@@ -511,4 +563,3 @@ def test_simular_na_meta_com_falha_no_recalculo_mantem_resultado_sem_na_meta() -
 
     assert resultado.totais.diferenca == 13.0
     assert resultado.na_meta is None
-

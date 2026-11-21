@@ -4,6 +4,7 @@ confere o resultado e resume. A LLM só entra na geração do código e na reda�
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import date
+from typing import Any
 
 import pandas as pd
 
@@ -26,6 +27,7 @@ from app.simulacao.resumo import (
     maiores_lojas, medir_impacto, montar_ressalvas, quebrar_por,
 )
 from app.simulacao.trilha import Cronometro, ExecucaoSimulada, montar_trilha_simulacao
+from app.tools.code_tool.codigo import CodigoInseguroError
 from app.tools.code_tool.dtos import CodigoGerado, ContextoGeracao
 from app.tools.code_tool.gerador import GeradorCodigo, GeradorCodigoModelo
 from app.tools.code_tool.runner import CodeRunner
@@ -44,9 +46,12 @@ CAMPOS_EXPLICACAO = {
 class SimulacaoFalhouError(RuntimeError):
     """Nenhuma tentativa produziu resultado válido. Nunca se devolve resultado parcial."""
 
-    def __init__(self, etapa: str, mensagem: str, codigo: str | None = None) -> None:
+    def __init__(
+        self, etapa: str, mensagem: str, codigo: str | None = None, alertas: list[dict[str, Any]] | None = None
+    ) -> None:
         super().__init__(f"{etapa}: {mensagem}")
         self.etapa, self.mensagem, self.codigo = etapa, mensagem, codigo
+        self.alertas = alertas or []
 
 
 class ExecucaoFalhouError(RuntimeError):
@@ -91,6 +96,7 @@ class SimuladorCampanha:
         self._hoje = hoje
 
     def simular(self, regra: RegraCampanha, campanhas: list[CampanhaContexto] | None = None) -> ResultadoSimulacao:
+        alertas: list[dict[str, Any]] = []
         parametros = ler_parametros(regra)
         referencia = self._ler_referencia(regra, parametros.data_inicio, parametros.data_fim)
         competencias = competencias_do_periodo(parametros.data_inicio, parametros.data_fim)
@@ -106,7 +112,7 @@ class SimuladorCampanha:
         contexto = ContextoGeracao(parametros, competencias, _amostras(bases, baseline))
         with cronometro.medir("conferir"):
             conferencia = self._executar_referencia(contexto, bases, baseline)
-        aprovada = self._gerar_e_executar(contexto, bases, baseline, conferencia, cronometro)
+        aprovada = self._gerar_e_executar(contexto, bases, baseline, conferencia, cronometro, alertas)
         with cronometro.medir("resumir"):
             resultado = self._resumir(
                 regra.rule_id, contexto, bases, baseline, aprovada, fontes, resumo_referencia,
@@ -119,7 +125,9 @@ class SimuladorCampanha:
             campanhas=fontes_da_vigente(fontes, periodos), tempos=cronometro.tempos,
             referencia=resumo_referencia,
         ))
-        return resultado.model_copy(update={"comissao_periodo": periodos, "conflitos": conflitos, "trilha": trilha})
+        return resultado.model_copy(update={
+            "comissao_periodo": periodos, "conflitos": conflitos, "trilha": trilha, "alertas": list(alertas),
+        })
 
     def _campanhas_da_especificacao(self) -> list[CampanhaContexto]:
         return self._especificacao.campanhas() if self._especificacao else []
@@ -158,6 +166,7 @@ class SimuladorCampanha:
     def _gerar_e_executar(
         self, contexto: ContextoGeracao, bases: BasesSimulacao, baseline: pd.DataFrame,
         conferencia: TentativaAprovada | None, cronometro: Cronometro,
+        alertas: list[dict[str, Any]],
     ) -> TentativaAprovada:
         erro: str | None = None
         codigo: CodigoGerado | None = None
@@ -172,13 +181,26 @@ class SimuladorCampanha:
                 with cronometro.medir("conferir"):
                     conferir_contra_referencia(comparacao, conferencia.comparacao)
                 return TentativaAprovada(codigo, comparacao, numero, CONFERIDO)
+            except CodigoInseguroError as falha:
+                alertas.append({
+                    "tipo": "codigo_inseguro",
+                    "linha": falha.linha,
+                    "descricao": falha.descricao,
+                    "mensagem": f"Código Python suspeito na linha {falha.linha}: {falha.descricao}",
+                })
+                erro = f"{type(falha).__name__}: {falha}"
             # Qualquer falha da tentativa (LLM fora/429, código inválido, retorno com tipo errado)
             # vira nova tentativa e, no fim, um 422 com a causa, nunca um 500 genérico.
             except Exception as falha:
                 erro = f"{type(falha).__name__}: {falha}"
         if conferencia is not None:
             return replace(conferencia, numero=self._max_tentativas, observacao=f"{USOU_REFERENCIA} Último erro: {erro}")
-        raise SimulacaoFalhouError("geracao_codigo", erro or "sem detalhe", codigo.fonte if codigo else None)
+        raise SimulacaoFalhouError(
+            "seguranca_codigo" if alertas else "geracao_codigo",
+            erro or "sem detalhe",
+            codigo.fonte if codigo else None,
+            alertas=alertas,
+        )
 
     def _executar(
         self, codigo: CodigoGerado, contexto: ContextoGeracao, bases: BasesSimulacao, baseline: pd.DataFrame,

@@ -21,6 +21,20 @@ CONSULTA_FALHOU = {
     "tempo": 80, "tabelas": ["venda"], "competencias": [], "filtros": None, "registros": 0, "sql": "SELECT x FROM venda LIMIT 50",
     "erro": "Erro do PostgreSQL: column x does not exist. Corrija a query.",
 }
+CONSULTA_BLOQUEADA = {
+    "status": "bloqueado",
+    "mensagem": "Consulta bloqueada por segurança.",
+    "situacao": "erro: consulta bloqueada por segurança",
+    "tempo": 15,
+    "tabelas": ["venda"],
+    "competencias": [],
+    "filtros": None,
+    "registros": 0,
+    "sql": "DELETE FROM venda",
+    "erro": "O Guard de segurança bloqueou o SQL. Motivo: Comando de escrita encontrado.",
+    "motivo": "Comando de escrita encontrado",
+    "horario": "2026-11-17T12:00:00",
+}
 
 
 def turno_com_consulta(retorno: dict[str, object], pensamento: str = "") -> list[BaseMessage]:
@@ -69,6 +83,48 @@ def test_consulta_que_falhou_vira_passo_com_erro() -> None:
     assert passo["descricao"] == "Falha ao executar a consulta no banco"
     assert passo["mensagem_erro"] == "Falha de sintaxe ou execução no banco."
     assert passo["registros_retornados"] == 0 and passo["dados"] is None
+
+
+def test_consulta_bloqueada_aparece_na_trilha_com_sql_e_motivo() -> None:
+    trilha = montar_trilha_chat(turno_com_consulta(CONSULTA_BLOQUEADA), "m")
+    assert trilha is not None
+    passo = trilha["passos"][0]
+    assert passo["situacao"] == "ERRO"
+    assert passo["status"] == "bloqueada"
+    assert passo["sql_executado"] == "DELETE FROM venda"
+    assert passo["motivo"] == "Comando de escrita encontrado"
+    assert passo["horario"] == "2026-11-17T12:00:00"
+    assert "Comando de escrita encontrado" in passo["mensagem_erro"]
+    assert "eventos" in trilha
+    assert len(trilha["eventos"]) == 1
+    assert trilha["eventos"][0]["sql"] == "DELETE FROM venda"
+    assert trilha["eventos"][0]["motivo"] == "Comando de escrita encontrado"
+    assert trilha["eventos"][0]["status"] == "bloqueada"
+
+
+def test_consulta_bloqueada_gera_evento_no_chat_e_alerta_mas_simulacao_nao_tem_eventos() -> None:
+    from app.agent.service import extrair_alertas
+    from app.simulacao.dtos import TrilhaSimulacao
+
+    trilha = montar_trilha_chat(turno_com_consulta(CONSULTA_BLOQUEADA), "m")
+    assert trilha is not None
+    assert "eventos" in trilha
+    assert len(trilha["eventos"]) == 1
+    assert trilha["eventos"][0]["sql"] == "DELETE FROM venda"
+    assert trilha["eventos"][0]["motivo"] == "Comando de escrita encontrado"
+    assert trilha["eventos"][0]["status"] == "bloqueada"
+
+    alertas = extrair_alertas(trilha)
+    assert len(alertas) == 1
+    assert alertas[0]["tipo"] == "consulta_bloqueada"
+    assert alertas[0]["sql"] == "DELETE FROM venda"
+    assert alertas[0]["motivo"] == "Comando de escrita encontrado"
+    assert alertas[0]["status"] == "bloqueada"
+    assert "Consulta SQL bloqueada por segurança" in alertas[0]["mensagem"]
+
+    trilha_sim = TrilhaSimulacao()
+    assert not hasattr(trilha_sim, "eventos")
+    assert "eventos" not in trilha_sim.model_dump()
 
 
 def test_ficha_registrada_lista_o_que_falta_pelo_rotulo() -> None:

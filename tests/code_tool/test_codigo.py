@@ -1,6 +1,6 @@
 import pytest
 
-from app.tools.code_tool.codigo import CodigoInvalidoError, extrair_codigo, validar_codigo
+from app.tools.code_tool.codigo import CodigoInseguroError, CodigoInvalidoError, extrair_codigo, validar_codigo
 
 VALIDO = "import pandas as pd\n\ndef aplicar_regra(bases, apuracao_base, competencias):\n    return {}\n"
 
@@ -39,3 +39,28 @@ def test_validar_codigo_recusa_codigo_inseguro_ou_fora_do_contrato(fonte: str, t
         validar_codigo(fonte)
 
     assert trecho in str(erro.value)
+
+
+def test_validar_codigo_distingue_codigo_inseguro_com_linha_de_sintaxe_invalida() -> None:
+    # 1. import os levanta CodigoInseguroError com linha
+    with pytest.raises(CodigoInseguroError) as exc_import:
+        validar_codigo("import os\n" + VALIDO)
+    assert exc_import.value.linha == 1
+    assert "os" in exc_import.value.descricao
+
+    # 2. eval(...) levanta CodigoInseguroError com linha
+    with pytest.raises(CodigoInseguroError) as exc_eval:
+        validar_codigo(VALIDO + "eval('1')\n")
+    assert exc_eval.value.linha == 5
+    assert "eval" in exc_eval.value.descricao
+
+    # 3. atributo proibido levanta CodigoInseguroError com linha
+    with pytest.raises(CodigoInseguroError) as exc_attr:
+        validar_codigo(VALIDO + "x = pd._libs\n")
+    assert exc_attr.value.linha == 5
+    assert "_libs" in exc_attr.value.descricao
+
+    # 4. sintaxe inválida levanta CodigoInvalidoError que NÃO é CodigoInseguroError
+    with pytest.raises(CodigoInvalidoError) as exc_sintaxe:
+        validar_codigo("def aplicar_regra(:\n")
+    assert not isinstance(exc_sintaxe.value, CodigoInseguroError)

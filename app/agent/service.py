@@ -109,6 +109,9 @@ def get_events(messages: list[BaseMessage]) -> list[dict[str, Any]]:
                     paired_tools[call_id]["filtros"] = dados_resultado.get("filtros")
                     paired_tools[call_id]["registros"] = dados_resultado.get("registros")
                     paired_tools[call_id]["sql"] = dados_resultado.get("sql") or dados_resultado.get("sql_gerado")
+                    paired_tools[call_id]["motivo"] = dados_resultado.get("motivo")
+                    paired_tools[call_id]["horario"] = dados_resultado.get("horario")
+                    paired_tools[call_id]["status"] = dados_resultado.get("status")
                 else:
                     paired_tools[call_id]["situacao"] = "ok"
 
@@ -209,6 +212,23 @@ def _conferir_resposta_do_turno(
     )
 
 
+def extrair_alertas(trilha: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Extrai alertas de segurança ocorridos no turno (ex.: consultas bloqueadas)."""
+    alertas = []
+    if trilha and "eventos" in trilha:
+        for evento in trilha["eventos"]:
+            if evento.get("status") == "bloqueada":
+                alertas.append({
+                    "tipo": "consulta_bloqueada",
+                    "sql": evento.get("sql"),
+                    "motivo": evento.get("motivo"),
+                    "horario": evento.get("horario"),
+                    "status": "bloqueada",
+                    "mensagem": f"Consulta SQL bloqueada por segurança: {evento.get('motivo')}",
+                })
+    return alertas
+
+
 def _montar_resultado_turno(
     thread_id: str, messages: list[BaseMessage], user_input: str,
     regra: dict[str, Any] | None, historico_mensagens: list[BaseMessage],
@@ -225,6 +245,7 @@ def _montar_resultado_turno(
         "events": get_events(messages),
         "regra": regra_do_turno,
         "trilha": trilha,
+        "alertas": extrair_alertas(trilha),
     }
 
 
