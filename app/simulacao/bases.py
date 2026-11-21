@@ -4,6 +4,8 @@ As linhas nunca passam pelo contexto da LLM: vão para o baseline e para o execu
 Competência é sempre texto `YYYY-MM`; `data_venda` guarda a data real (em nov/25 há vendas
 de 24 a 28/11), enquanto loja e cargo são vínculos mensais (dia 1º).
 """
+import calendar
+import logging
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
@@ -12,7 +14,9 @@ from typing import Any, Protocol
 
 import pandas as pd
 
-from app.simulacao.regras_base import intercorrencias_vazias
+from app.simulacao.regras_base import COLUNAS_INTERCORRENCIAS, intercorrencias_vazias
+
+logger = logging.getLogger(__name__)
 
 SQL_RH = """
 SELECT f.matricula, to_char(fl.date_ref, 'YYYY-MM') AS competencia,
@@ -51,23 +55,72 @@ JOIN cargo c ON c.id = mc.cargo_id
 WHERE mc.date_ref = (SELECT max(date_ref) FROM marca_cargo)
 """
 
-COLUNAS_DATA = ("data_venda", "data_admissao", "data_demissao")
+SQL_INTERCORRENCIAS = """
+SELECT DISTINCT matricula, tipo, data_inicio, data_fim
+FROM evento_rh
+WHERE data_inicio IS NOT NULL
+  AND (
+      (tipo = 'demissao' AND to_char(data_inicio, 'YYYY-MM') = ANY(%(competencias)s))
+      OR (tipo <> 'demissao' AND data_fim IS NULL AND data_inicio <= %(fim_periodo)s)
+      OR (tipo <> 'demissao' AND data_fim IS NOT NULL
+          AND data_inicio <= %(fim_periodo)s AND data_fim >= %(inicio_periodo)s)
+  )
+ORDER BY data_inicio, matricula, tipo
+"""
 
-# As tabelas que SQL_RH, SQL_VENDAS e SQL_COMISSOES leem, para a trilha (contrato 2.2).
+SQL_INTERCORRENCIAS_PENDENTES = r"""
+SELECT COUNT(*)::int AS total
+FROM solicitacao_alteracao
+WHERE status = 'PENDENTE'
+  AND tipo IN ('AFASTAMENTO', 'FERIAS', 'LICENCA_MATERNIDADE', 'COBERTURA_LOJA', 'DEMISSAO')
+  AND (
+      (
+          tipo = 'DEMISSAO'
+          AND to_char(
+              CASE WHEN (valor_depois->>'data_inicio') ~ '^\d{4}-\d{2}-\d{2}$'
+                   THEN (valor_depois->>'data_inicio')::date END,
+              'YYYY-MM'
+          ) = ANY(%(competencias)s)
+      )
+      OR (
+          tipo <> 'DEMISSAO'
+          AND (
+              CASE WHEN (valor_depois->>'data_inicio') ~ '^\d{4}-\d{2}-\d{2}$'
+                   THEN (valor_depois->>'data_inicio')::date END
+          ) <= %(fim_periodo)s
+          AND (
+              valor_depois->>'data_fim' IS NULL
+              OR (
+                  CASE WHEN (valor_depois->>'data_fim') ~ '^\d{4}-\d{2}-\d{2}$'
+                       THEN (valor_depois->>'data_fim')::date END
+              ) >= %(inicio_periodo)s
+          )
+      )
+  )
+"""
+
+COLUNAS_DATA = ("data_venda", "data_admissao", "data_demissao", "data_inicio", "data_fim")
+
+# As tabelas que as queries das bases leem, para a trilha (contrato 2.2).
 TABELAS_DAS_BASES = (
-    "cargo", "funcionario", "funcionario_cargo", "funcionario_loja", "loja", "marca", "marca_cargo", "venda",
+    "cargo", "evento_rh", "funcionario", "funcionario_cargo", "funcionario_loja",
+    "loja", "marca", "marca_cargo", "solicitacao_alteracao", "venda",
 )
-SQL_DAS_BASES = "\n".join(sql.strip() + ";" for sql in (SQL_RH, SQL_VENDAS, SQL_COMISSOES))
+SQL_DAS_BASES = "\n".join(
+    sql.strip() + ";"
+    for sql in (SQL_RH, SQL_VENDAS, SQL_COMISSOES, SQL_INTERCORRENCIAS, SQL_INTERCORRENCIAS_PENDENTES)
+)
 
 
 @dataclass(frozen=True)
 class BasesSimulacao:
-    """As três bases de um período: `rh`, `vendas` e `comissoes` (pct literal: 2.5 = 2,5%)."""
+    """As bases de um período: `rh`, `vendas`, `comissoes` (pct literal: 2.5 = 2,5%) e intercorrências."""
 
     rh: pd.DataFrame
     vendas: pd.DataFrame
     comissoes: pd.DataFrame
     intercorrencias: pd.DataFrame = field(default_factory=intercorrencias_vazias)
+    intercorrencias_pendentes: int = 0
 
     def como_dict(self) -> dict[str, pd.DataFrame]:
         return {"rh": self.rh, "vendas": self.vendas, "comissoes": self.comissoes}
@@ -90,11 +143,64 @@ class PostgresFonteBases:
     def carregar(self, competencias: list[str]) -> BasesSimulacao:
         parametros = {"competencias": competencias}
         with self._abrir_conexao() as conexao:
+            rh = _consultar(conexao, SQL_RH, parametros)
+            vendas = _consultar(conexao, SQL_VENDAS, parametros)
+            comissoes = _consultar(conexao, SQL_COMISSOES, {})
+            if competencias:
+                inicio_periodo, fim_periodo = _limites_competencias(competencias)
+                params_inter = {
+                    "competencias": competencias,
+                    "inicio_periodo": inicio_periodo,
+                    "fim_periodo": fim_periodo,
+                }
+                intercorrencias = _consultar_intercorrencias(conexao, params_inter)
+                pendentes = _contar_pendentes(conexao, params_inter)
+            else:
+                intercorrencias = intercorrencias_vazias()
+                pendentes = 0
             return BasesSimulacao(
-                rh=_consultar(conexao, SQL_RH, parametros),
-                vendas=_consultar(conexao, SQL_VENDAS, parametros),
-                comissoes=_consultar(conexao, SQL_COMISSOES, {}),
+                rh=rh,
+                vendas=vendas,
+                comissoes=comissoes,
+                intercorrencias=intercorrencias,
+                intercorrencias_pendentes=pendentes,
             )
+
+
+def _limites_competencias(competencias: list[str]) -> tuple[date, date]:
+    ordenadas = sorted(competencias)
+    ano_i, mes_i = map(int, ordenadas[0].split("-"))
+    ano_f, mes_f = map(int, ordenadas[-1].split("-"))
+    return date(ano_i, mes_i, 1), date(ano_f, mes_f, calendar.monthrange(ano_f, mes_f)[1])
+
+
+def _consultar_intercorrencias(conexao: ConexaoDb, parametros: dict[str, Any]) -> pd.DataFrame:
+    tabela = _consultar(conexao, SQL_INTERCORRENCIAS, parametros)
+    if tabela.empty:
+        return intercorrencias_vazias()
+    tabela.loc[tabela["tipo"] == "demissao", "data_fim"] = pd.NaT
+    total_antes = len(tabela)
+    valida = (
+        tabela["tipo"].isin(["demissao", "cobertura_loja"])
+        | (tabela["data_fim"].notna() & (tabela["data_fim"] >= tabela["data_inicio"]))
+    )
+    tabela = tabela.loc[valida, COLUNAS_INTERCORRENCIAS].reset_index(drop=True)
+    descartadas = total_antes - len(tabela)
+    if descartadas > 0:
+        logger.warning(
+            "%d intercorrência(s) de RH ignorada(s): sem data_fim ou data_fim anterior a data_inicio.",
+            descartadas,
+        )
+    if tabela.empty:
+        return intercorrencias_vazias()
+    return tabela
+
+
+def _contar_pendentes(conexao: ConexaoDb, parametros: dict[str, Any]) -> int:
+    with conexao.cursor() as cursor:
+        cursor.execute(SQL_INTERCORRENCIAS_PENDENTES, parametros)
+        linha = cursor.fetchone()
+    return int(linha[0]) if linha and linha[0] is not None else 0
 
 
 def _consultar(conexao: ConexaoDb, sql: str, parametros: dict[str, Any]) -> pd.DataFrame:

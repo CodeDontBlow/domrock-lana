@@ -75,7 +75,9 @@ def fatos_da_simulacao(resumo: dict) -> list[str]:
         *_fatos_impacto(resumo.get("impacto"), resumo.get("maiores_lojas", []), custo),
         *_fatos_quebras(resumo, custo),
     ]
-    return fatos + [_fato_cenario(cenario) for cenario in resumo.get("cenarios", [])]
+    cenarios = [_fato_cenario(cenario) for cenario in resumo.get("cenarios", [])]
+    aviso = resumo.get("aviso_pendentes")
+    return fatos + cenarios + ([f"{aviso}."] if aviso else [])
 
 
 def _fatos_quebras(resumo: dict, custo: float) -> list[str]:

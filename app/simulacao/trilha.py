@@ -71,7 +71,8 @@ def montar_trilha_simulacao(execucao: ExecucaoSimulada) -> TrilhaSimulacao:
     for passo in passos:
         passo.tempo_ms = execucao.tempos.get(passo.ferramenta, 0)
     return TrilhaSimulacao(
-        modelo=execucao.modelo, tentativas=execucao.tentativas, premissas=gerar_premissas(execucao.parametros),
+        modelo=execucao.modelo, tentativas=execucao.tentativas,
+        premissas=gerar_premissas(execucao.parametros, execucao.bases.intercorrencias_pendentes),
         passos=passos, campanhas=execucao.campanhas,
     )
 
