@@ -1,15 +1,20 @@
+from datetime import date
+
+import pandas as pd
 import pytest
 
 from app.simulacao.bases import BasesSimulacao
 from app.simulacao.dtos import ResultadoSimulacao
 from app.simulacao.service import SimulacaoFalhouError, SimuladorCampanha
+from app.tools.code_tool.dtos import ContextoGeracao
 from app.tools.code_tool.gerador import GeradorCodigoModelo
 from app.tools.code_tool.runner import SubprocessRunner
+from app.tools.regra_tool.dtos import ParametrosSimulacao
 from app.tools.regra_tool.parametros import RegraInvalidaError, montar_regra
 from tests.fakes import (
-    FakeExplicador, FakeFonteBases, FakeGeradorLlmIndisponivel, FakeGeradorSequencial,
-    bases_com_admissao_no_mes, bases_com_afastamento_piso, bases_pequenas, fonte_modelo,
-    parametros_black_friday,
+    FakeExplicador, FakeFonteBases, FakeGeradorCodigoInseguro, FakeGeradorLlmIndisponivel,
+    FakeGeradorSempreInseguro, FakeGeradorSequencial, bases_com_admissao_no_mes,
+    bases_com_afastamento_piso, bases_pequenas, fonte_modelo, parametros_black_friday,
 )
 
 VALORES = {
@@ -23,8 +28,12 @@ CODIGO_QUEBRADO = "def aplicar_regra(bases, apuracao_base, competencias):\n    r
 def _simulador(
     gerador: FakeGeradorSequencial | FakeGeradorLlmIndisponivel,
     bases: BasesSimulacao | None = None,
+    recalculo: FakeGeradorSequencial | None = None,
 ) -> SimuladorCampanha:
-    return SimuladorCampanha(FakeFonteBases(bases or bases_pequenas()), gerador, SubprocessRunner(), FakeExplicador())
+    return SimuladorCampanha(
+        FakeFonteBases(bases or bases_pequenas()), gerador, SubprocessRunner(), FakeExplicador(),
+        recalculo=recalculo,
+    )
 
 
 def _conferir_soma_por_pessoa(resultado: ResultadoSimulacao) -> None:
@@ -275,13 +284,26 @@ class RunnerEspiao:
         return self.runner.executar(fonte, bases, apuracao_base, competencias)
 
 
-def test_codigo_com_import_os_nao_e_executado_e_gera_alerta() -> None:
-    codigo_inseguro = (
-        "def aplicar_regra(bases, apuracao_base, competencias):\n"
-        "    import os\n"
-        "    return apuracao_base\n"
-    )
-    gerador = FakeGeradorSequencial([codigo_inseguro, codigo_inseguro])
+def test_duas_simulacoes_seguidas_no_mesmo_simulador_limpam_alertas() -> None:
+    fonte_valida = fonte_modelo(parametros_black_friday())
+    gerador = FakeGeradorCodigoInseguro(fonte_valida, linha=2, descricao="Import proibido: 'os'")
+    simulador = _simulador(gerador)
+
+    # 1ª simulação: tentativa insegura na 1ª chamada, válida na 2ª -> termina com alerta
+    resultado_1 = simulador.simular(montar_regra(VALORES, "bf", "draft-1"))
+    assert len(resultado_1.alertas) == 1
+    assert resultado_1.alertas[0]["tipo"] == "codigo_inseguro"
+    assert resultado_1.alertas[0]["linha"] == 2
+    assert "os" in resultado_1.alertas[0]["descricao"]
+    assert "Código Python suspeito na linha 2" in resultado_1.alertas[0]["mensagem"]
+
+    # 2ª simulação no MESMO SimuladorCampanha, sem código inseguro -> alertas == []
+    resultado_2 = simulador.simular(montar_regra(VALORES, "bf", "draft-2"))
+    assert resultado_2.alertas == []
+
+
+def test_gerador_que_so_devolve_codigo_inseguro_falha_com_etapa_seguranca_codigo() -> None:
+    gerador = FakeGeradorSempreInseguro(linha=2, descricao="Import proibido: 'os'; permitidos: ['datetime', 'math', 'numpy', 'pandas']")
     runner_espiao = RunnerEspiao(SubprocessRunner())
     simulador = SimuladorCampanha(FakeFonteBases(bases_pequenas()), gerador, runner_espiao, FakeExplicador())
 
@@ -289,10 +311,12 @@ def test_codigo_com_import_os_nao_e_executado_e_gera_alerta() -> None:
         simulador.simular(montar_regra(VALORES, "bf", "draft-1"))
 
     assert runner_espiao.chamadas == 0
+    assert exc_info.value.etapa == "seguranca_codigo"
     assert exc_info.value.alertas
     assert exc_info.value.alertas[0]["tipo"] == "codigo_inseguro"
     assert exc_info.value.alertas[0]["linha"] == 2
     assert "os" in exc_info.value.alertas[0]["descricao"]
+    assert "Código Python suspeito na linha 2" in exc_info.value.alertas[0]["mensagem"]
 
 
 def test_codigo_limpo_continua_rodando_normalmente_sem_alertas() -> None:
@@ -302,3 +326,240 @@ def test_codigo_limpo_continua_rodando_normalmente_sem_alertas() -> None:
     assert resultado.alertas == []
 
 
+def test_gherkin_matric58_intercorrencia_da_especificacao_entra_na_apuracao_julho() -> None:
+    rh = pd.DataFrame([{
+        "matricula": "MATRIC-58", "competencia": "2025-07", "cod_loja": "1", "cod_marca": "10",
+        "cod_cargo": "100", "data_admissao": pd.Timestamp("2020-01-01"), "data_demissao": pd.NaT,
+    }])
+    vendas = pd.DataFrame([{
+        "matricula": "MATRIC-58", "competencia": "2025-07", "data_venda": pd.Timestamp("2025-07-05"),
+        "vlr_venda": 100000.0, "cod_loja": "1", "cod_marca": "10", "cod_cargo": "100",
+    }])
+    comissoes = pd.DataFrame([{"cod_marca": "10", "cod_cargo": "100", "pct_comiss": 2.0}])
+    inter = pd.DataFrame([{
+        "matricula": "MATRIC-58", "tipo": "afastamento",
+        "data_inicio": pd.Timestamp("2025-07-10"), "data_fim": pd.Timestamp("2025-07-25"),
+    }])
+    bases = BasesSimulacao(rh=rh, vendas=vendas, comissoes=comissoes, intercorrencias=inter)
+
+    valores_julho = {
+        "periodo": {"data_inicio": "2025-07-01", "data_fim": "2025-07-31"},
+        "pct_acrescimo": 1.0, "marcas_alvo": ["10"], "cargos_alvo": ["100"],
+        "meta_vendas": 50000.0, "orcamento_limite": 5000.0,
+    }
+    parametros = ParametrosSimulacao(
+        data_inicio=date(2025, 7, 1), data_fim=date(2025, 7, 31), pct_acrescimo=1.0,
+        marcas_alvo=["10"], cargos_alvo=["100"], meta_vendas=50000.0, orcamento_limite=5000.0,
+    )
+    fonte = GeradorCodigoModelo().gerar(ContextoGeracao(parametros, ["2025-07"], {}), None).fonte
+
+    resultado = _simulador(FakeGeradorSequencial([fonte]), bases=bases).simular(
+        montar_regra(valores_julho, "jul-58", "draft-58")
+    )
+
+    # Base 5a: 100.000 * 2% = 2.000; 5f (16 dias afastado, 15 trabalhados, teto 15 remunerados) -> fator 30/15 = 2 -> 4.000.
+    # Simulado (+1%): 100.000 * 3% = 3.000 * 2 = 6.000.
+    pessoa = resultado.apuracao_por_pessoa[0]
+    assert pessoa.matricula == "MATRIC-58"
+    assert pessoa.comissao_atual == 4000.0
+    assert pessoa.comissao_com_campanha == 6000.0
+    assert any("5f — afastamento de 10/07 a 25/07: 16 dias, 15 remunerados" in r.descricao for r in pessoa.detalhamento)
+    assert [(r.regra, r.pessoas) for r in resultado.regras_base_aplicadas] == [("5e_5f", 1)]
+    _conferir_soma_por_pessoa(resultado)
+
+
+def test_gherkin_intercorrencia_pendente_nao_entra_e_gera_aviso() -> None:
+    gerador = FakeGeradorSequencial([fonte_modelo(parametros_black_friday())])
+    base_sem_pendente = bases_pequenas()
+    base_com_pendente = BasesSimulacao(
+        rh=base_sem_pendente.rh, vendas=base_sem_pendente.vendas, comissoes=base_sem_pendente.comissoes,
+        intercorrencias_pendentes=1,
+    )
+
+    sem_pendente = _simulador(FakeGeradorSequencial([fonte_modelo(parametros_black_friday())]), bases=base_sem_pendente).simular(
+        montar_regra(VALORES, "bf", "draft-0")
+    )
+    com_pendente = _simulador(gerador, bases=base_com_pendente).simular(
+        montar_regra(VALORES, "bf", "draft-1")
+    )
+
+    aviso = "1 intercorrência pendente de aprovação não foi considerada"
+    assert com_pendente.totais == sem_pendente.totais
+    assert aviso in com_pendente.ressalvas
+    assert aviso in com_pendente.explicacao
+    assert aviso in com_pendente.trilha.premissas
+    assert aviso not in sem_pendente.ressalvas
+
+
+def test_simular_integra_demissao_5d_afastamento_5e_ferias_5g_e_ignora_provisorias_nulas() -> None:
+    base = bases_pequenas()
+    inter = pd.DataFrame([
+        {"matricula": "M1", "tipo": "ferias", "data_inicio": pd.Timestamp("2025-11-01"), "data_fim": pd.Timestamp("2025-11-10")},
+        {"matricula": "M2", "tipo": "demissao", "data_inicio": pd.Timestamp("2025-11-15"), "data_fim": pd.NaT},
+        {"matricula": "G1", "tipo": "afastamento", "data_inicio": pd.Timestamp("2025-11-01"), "data_fim": pd.Timestamp("2025-11-10")},
+        {"matricula": "G1", "tipo": "cobertura_loja", "data_inicio": pd.NaT, "data_fim": pd.NaT},
+        {"matricula": "M1", "tipo": "licenca_maternidade", "data_inicio": pd.Timestamp("2025-11-02"), "data_fim": pd.NaT},
+    ])
+    bases = BasesSimulacao(rh=base.rh, vendas=base.vendas, comissoes=base.comissoes, intercorrencias=inter)
+
+    resultado = _simulador(
+        FakeGeradorSequencial([fonte_modelo(parametros_black_friday())]), bases=bases
+    ).simular(montar_regra(VALORES, "bf-inter", "draft-inter"))
+
+    por_mat = {p.matricula: p for p in resultado.apuracao_por_pessoa}
+    assert por_mat["M1"].comissao_atual == 20.0
+    assert por_mat["M1"].comissao_com_campanha == 23.33
+    assert any(r.regra == "5g" for r in por_mat["M1"].detalhamento)
+    assert por_mat["M2"].comissao_atual == 12.0
+    assert por_mat["M2"].comissao_com_campanha == 16.0
+    assert any(r.regra == "5d" for r in por_mat["M2"].detalhamento)
+    assert por_mat["G1"].comissao_atual == 3500.0
+    assert any(r.regra == "5e" for r in por_mat["G1"].detalhamento)
+    assert resultado.pessoas_no_piso == 1
+    _conferir_soma_por_pessoa(resultado)
+
+
+# ADR-006: campanha futura calculada sobre a competência de referência, sem previsão.
+HOJE = date(2026, 11, 20)
+BLACK_FRIDAY_2026 = {**VALORES, "periodo": {"data_inicio": "2026-11-24", "data_fim": "2026-11-30"}}
+
+
+def _simulador_futuro(fonte: FakeFonteBases | None = None) -> SimuladorCampanha:
+    return SimuladorCampanha(
+        fonte or FakeFonteBases(bases_pequenas()), GeradorCodigoModelo(), SubprocessRunner(), FakeExplicador(),
+        hoje=lambda: HOJE,
+    )
+
+
+def _black_friday_2026(**valores: object) -> ResultadoSimulacao:
+    regra = montar_regra({**BLACK_FRIDAY_2026, **valores}, "bf 2026", "draft-1")
+    return _simulador_futuro().simular(regra)
+
+
+def test_futuro_com_crescimento_zero_custa_o_mesmo_que_a_referencia() -> None:
+    # Critério 1: Black Friday 2026 sobre nov/2025 com 0% = Black Friday 2025.
+    historica = _simulador_futuro().simular(montar_regra(VALORES, "bf 2025", "draft-1"))
+
+    futura = _black_friday_2026(competencia_referencia="2025-11", pct_crescimento=0)
+
+    assert futura.totais == historica.totais
+    assert futura.totais.diferenca == 13.0
+    assert futura.meta.vendas_periodo == historica.meta.vendas_periodo == 1300.0
+    assert futura.competencias == ["2026-11"]
+    assert historica.referencia is None
+
+
+def test_futuro_com_crescimento_aumenta_venda_e_custo_na_mesma_proporcao() -> None:
+    # Critério 2: com 10%, venda e custo sobem 10%.
+    base = _black_friday_2026(competencia_referencia="2025-11", pct_crescimento=0)
+
+    com_crescimento = _black_friday_2026(competencia_referencia="2025-11", pct_crescimento=10)
+
+    assert com_crescimento.totais.diferenca == pytest.approx(base.totais.diferenca * 1.1, abs=0.01)
+    assert com_crescimento.meta.vendas_periodo == pytest.approx(base.meta.vendas_periodo * 1.1, abs=0.01)
+    assert com_crescimento.totais.baseline == pytest.approx(base.totais.baseline * 1.1, abs=0.01)
+    _conferir_soma_por_pessoa(com_crescimento)
+
+
+def test_futuro_le_a_referencia_e_registra_competencia_e_crescimento_na_trilha() -> None:
+    fonte = FakeFonteBases(bases_pequenas())
+    regra = montar_regra({**BLACK_FRIDAY_2026, "competencia_referencia": "2025-11", "pct_crescimento": 10},
+                         "bf 2026", "draft-1")
+
+    resultado = _simulador_futuro(fonte).simular(regra)
+
+    assert fonte.competencias_pedidas == [["2025-11"]]
+    esperado = "Calculado sobre nov/2025 (referência), crescimento de 10%."
+    assert resultado.referencia.descricao == esperado
+    assert resultado.referencia.competencias_lidas == ["2025-11"]
+    assert resultado.trilha.premissas[0] == esperado
+    carregar = resultado.trilha.passos[0]
+    assert carregar.competencias == ["2025-11"]
+    assert carregar.descricao.startswith("Bases de nov/2025 (referência), deslocadas para nov/2026")
+    assert carregar.descricao.endswith(esperado)
+
+
+def test_futuro_sem_referencia_e_recusado_com_a_sugestao() -> None:
+    # Critério 3 no simulador: sem referência, nada é calculado e o erro traz a sugestão.
+    with pytest.raises(RegraInvalidaError) as erro:
+        _black_friday_2026()
+
+    assert any("sugestão: 2025-11" in e for e in erro.value.erros)
+
+
+def test_futuro_sem_base_da_referencia_pede_outro_mes() -> None:
+    with pytest.raises(SimulacaoFalhouError) as erro:
+        _black_friday_2026(competencia_referencia="2025-10")
+
+    assert erro.value.etapa == "dados" and "(referência)" in erro.value.mensagem
+
+
+def test_historico_ignora_referencia_e_crescimento() -> None:
+    sem = _simulador_futuro().simular(montar_regra(VALORES, "bf 2025", "draft-1"))
+
+    com = _simulador_futuro().simular(
+        montar_regra({**VALORES, "competencia_referencia": "2024-11", "pct_crescimento": 50}, "bf 2025", "draft-1"),
+    )
+
+    assert com.totais == sem.totais and com.referencia is None
+
+
+def test_simular_com_meta_acima_da_venda_calcula_na_meta() -> None:
+    # Vendas do período em bases_pequenas somam 1.300,00; com meta de 2.600,00 o fator é 2.0 (A6-93).
+    valores = {**VALORES, "meta_vendas": 2600.0, "orcamento_limite": 30.0}
+    gerador = FakeGeradorSequencial([fonte_modelo(parametros_black_friday(**valores))])
+
+    resultado = _simulador(gerador).simular(montar_regra(valores, "bf", "draft-1"))
+
+    assert resultado.na_meta is not None
+    assert resultado.na_meta.fator == 2.0
+    assert resultado.na_meta.vendas_na_meta == 2600.0
+    assert resultado.na_meta.comissao_sem_campanha > resultado.totais.baseline
+    assert resultado.na_meta.custo_adicional == round(
+        resultado.na_meta.comissao_com_campanha - resultado.na_meta.comissao_sem_campanha, 2
+    )
+    assert resultado.na_meta.cabe_no_orcamento is True
+
+
+def test_simular_com_meta_acima_da_venda_e_orcamento_estourado() -> None:
+    # Com custo adicional de 26,00 e orçamento limite de 20,00, não cabe no orçamento (A6-93).
+    valores = {**VALORES, "meta_vendas": 2600.0, "orcamento_limite": 20.0}
+    gerador = FakeGeradorSequencial([fonte_modelo(parametros_black_friday(**valores))])
+
+    resultado = _simulador(gerador).simular(montar_regra(valores, "bf", "draft-1"))
+
+    assert resultado.na_meta is not None
+    assert resultado.na_meta.cabe_no_orcamento is False
+
+
+def test_simular_com_meta_acima_da_venda_sem_orcamento() -> None:
+    # Sem orçamento definido, cabe_no_orcamento deve ser None (A6-93).
+    valores = {**VALORES, "meta_vendas": 2600.0, "orcamento_limite": None}
+    gerador = FakeGeradorSequencial([fonte_modelo(parametros_black_friday(**valores))])
+
+    resultado = _simulador(gerador).simular(montar_regra(valores, "bf", "draft-1"))
+
+    assert resultado.na_meta is not None
+    assert resultado.na_meta.cabe_no_orcamento is None
+
+
+def test_simular_com_meta_abaixo_ou_igual_a_venda_nao_gera_na_meta() -> None:
+    # Vendas no período somam 1.300,00; meta de 1.000,00 já foi superada (A6-93).
+    valores = {**VALORES, "meta_vendas": 1000.0}
+    gerador = FakeGeradorSequencial([fonte_modelo(parametros_black_friday(**valores))])
+
+    resultado = _simulador(gerador).simular(montar_regra(valores, "bf", "draft-1"))
+
+    assert resultado.na_meta is None
+
+
+def test_simular_na_meta_com_falha_no_recalculo_mantem_resultado_sem_na_meta() -> None:
+    # Falha no recálculo não derruba a simulação principal; na_meta fica None (A6-93).
+    valores = {**VALORES, "meta_vendas": 2600.0}
+    gerador = FakeGeradorSequencial([fonte_modelo(parametros_black_friday(**valores))])
+    simulador = _simulador(gerador, recalculo=FakeGeradorSequencial([CODIGO_QUEBRADO]))
+
+    resultado = simulador.simular(montar_regra(valores, "bf", "draft-1"))
+
+    assert resultado.totais.diferenca == 13.0
+    assert resultado.na_meta is None

@@ -91,7 +91,6 @@ def test_consulta_bloqueada_aparece_na_trilha_com_sql_e_motivo() -> None:
     passo = trilha["passos"][0]
     assert passo["situacao"] == "ERRO"
     assert passo["status"] == "bloqueada"
-    assert passo["sql"] == "DELETE FROM venda"
     assert passo["sql_executado"] == "DELETE FROM venda"
     assert passo["motivo"] == "Comando de escrita encontrado"
     assert passo["horario"] == "2026-11-17T12:00:00"
@@ -101,6 +100,31 @@ def test_consulta_bloqueada_aparece_na_trilha_com_sql_e_motivo() -> None:
     assert trilha["eventos"][0]["sql"] == "DELETE FROM venda"
     assert trilha["eventos"][0]["motivo"] == "Comando de escrita encontrado"
     assert trilha["eventos"][0]["status"] == "bloqueada"
+
+
+def test_consulta_bloqueada_gera_evento_no_chat_e_alerta_mas_simulacao_nao_tem_eventos() -> None:
+    from app.agent.service import extrair_alertas
+    from app.simulacao.dtos import TrilhaSimulacao
+
+    trilha = montar_trilha_chat(turno_com_consulta(CONSULTA_BLOQUEADA), "m")
+    assert trilha is not None
+    assert "eventos" in trilha
+    assert len(trilha["eventos"]) == 1
+    assert trilha["eventos"][0]["sql"] == "DELETE FROM venda"
+    assert trilha["eventos"][0]["motivo"] == "Comando de escrita encontrado"
+    assert trilha["eventos"][0]["status"] == "bloqueada"
+
+    alertas = extrair_alertas(trilha)
+    assert len(alertas) == 1
+    assert alertas[0]["tipo"] == "consulta_bloqueada"
+    assert alertas[0]["sql"] == "DELETE FROM venda"
+    assert alertas[0]["motivo"] == "Comando de escrita encontrado"
+    assert alertas[0]["status"] == "bloqueada"
+    assert "Consulta SQL bloqueada por segurança" in alertas[0]["mensagem"]
+
+    trilha_sim = TrilhaSimulacao()
+    assert not hasattr(trilha_sim, "eventos")
+    assert "eventos" not in trilha_sim.model_dump()
 
 
 def test_ficha_registrada_lista_o_que_falta_pelo_rotulo() -> None:

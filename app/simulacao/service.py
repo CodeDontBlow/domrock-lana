@@ -1,14 +1,16 @@
 """Orquestra a simulação: valida a regra, apura o baseline, gera e executa o código da regra,
 confere o resultado e resume. A LLM só entra na geração do código e na redação final.
 """
+from collections.abc import Callable
 from dataclasses import dataclass, replace
+from datetime import date
 from typing import Any
 
 import pandas as pd
 
 from app.core.config import get_settings
 from app.simulacao.assercoes import AssercaoViolada, conferir_contra_referencia, conferir_resultado
-from app.simulacao.bases import BasesSimulacao, FonteBases, competencias_do_periodo
+from app.simulacao.bases import BasesSimulacao, FonteBases, competencias_do_periodo, deslocar_bases
 from app.simulacao.por_pessoa import montar_apuracao_por_pessoa
 from app.simulacao.regras_aplicadas import contar_pessoas_no_piso, contar_regras_aplicadas
 from app.simulacao.regras_base import aplicar_ajustes, calcular_ajustes
@@ -16,24 +18,29 @@ from app.simulacao.vigencia import (
     CampanhaContexto, calcular_baseline_vigente, calcular_periodos, detectar_conflitos, fontes_da_vigente,
 )
 from app.simulacao.cenarios import SimularCusto, propor_cenarios
-from app.simulacao.dtos import ResultadoSimulacao
+from app.simulacao.dtos import AtingimentoMeta, ReferenciaSimulacao, ResultadoSimulacao, SimulacaoNaMeta
 from app.simulacao.especificacao import CatalogoEspecificacao
 from app.simulacao.explicacao import Explicador
+from app.simulacao.na_meta import escalar_vendas, fator_na_meta, montar_simulacao_na_meta
 from app.simulacao.resumo import (
-    RESSALVAS, avaliar_meta, avaliar_orcamento, avaliar_retorno, calcular_totais, maiores_lojas, medir_impacto,
-    quebrar_por,
+    avaliar_meta, avaliar_orcamento, avaliar_retorno, aviso_intercorrencias_pendentes, calcular_totais,
+    maiores_lojas, medir_impacto, montar_ressalvas, quebrar_por,
 )
 from app.simulacao.trilha import Cronometro, ExecucaoSimulada, montar_trilha_simulacao
-from app.tools.code_tool.analise_seguranca import AchadoSeguranca, analisar_seguranca
+from app.tools.code_tool.codigo import CodigoInseguroError
 from app.tools.code_tool.dtos import CodigoGerado, ContextoGeracao
 from app.tools.code_tool.gerador import GeradorCodigo, GeradorCodigoModelo
 from app.tools.code_tool.runner import CodeRunner
 from app.tools.regra_tool.dtos import ParametrosSimulacao, RegraCampanha
-from app.tools.regra_tool.parametros import ler_parametros
+from app.tools.regra_tool.parametros import RegraInvalidaError, ler_parametros
+from app.tools.regra_tool.referencia import ReferenciaCalculo, ler_referencia
 
 LINHAS_AMOSTRA = 10
 # Sem "retorno": a explicação só volta a falar dele na Sprint 3 (decisão do PO, 26/10).
-CAMPOS_EXPLICACAO = {"totais", "por_marca", "por_cargo", "orcamento", "meta", "impacto", "maiores_lojas", "cenarios"}
+CAMPOS_EXPLICACAO = {
+    "totais", "por_marca", "por_cargo", "orcamento", "meta", "impacto", "maiores_lojas", "cenarios", "na_meta",
+    "referencia",
+}
 
 
 class SimulacaoFalhouError(RuntimeError):
@@ -45,14 +52,6 @@ class SimulacaoFalhouError(RuntimeError):
         super().__init__(f"{etapa}: {mensagem}")
         self.etapa, self.mensagem, self.codigo = etapa, mensagem, codigo
         self.alertas = alertas or []
-
-
-class CodigoInseguroError(RuntimeError):
-    """O código gerado possui achados na análise de segurança estática."""
-
-    def __init__(self, mensagem: str, achados: list[AchadoSeguranca]) -> None:
-        super().__init__(mensagem)
-        self.achados = achados
 
 
 class ExecucaoFalhouError(RuntimeError):
@@ -81,26 +80,30 @@ class SimuladorCampanha:
     da IA é conferido contra ele. O contrato da Sprint 1 tem forma fixa, então sempre há referência.
     `recalculo` gera o código determinístico que simula de novo os cenários alternativos.
     `especificacao` traz as campanhas da especificação, que somam às do sistema na % vigente.
+    `hoje` decide se o período é futuro e, então, calculado sobre a competência de referência (ADR-006).
     """
 
     def __init__(
         self, fonte_bases: FonteBases, gerador: GeradorCodigo, runner: CodeRunner,
         explicador: Explicador, referencia: GeradorCodigo | None = None, max_tentativas: int = 2,
         recalculo: GeradorCodigo | None = None, especificacao: CatalogoEspecificacao | None = None,
+        hoje: Callable[[], date] = date.today,
     ) -> None:
         self._fonte_bases, self._gerador, self._runner = fonte_bases, gerador, runner
         self._explicador, self._referencia, self._max_tentativas = explicador, referencia, max_tentativas
         self._recalculo = recalculo or GeradorCodigoModelo()
         self._especificacao = especificacao
-        self._alertas: list[dict[str, Any]] = []
+        self._hoje = hoje
 
     def simular(self, regra: RegraCampanha, campanhas: list[CampanhaContexto] | None = None) -> ResultadoSimulacao:
-        self._alertas = []
+        alertas: list[dict[str, Any]] = []
         parametros = ler_parametros(regra)
+        referencia = self._ler_referencia(regra, parametros.data_inicio, parametros.data_fim)
         competencias = competencias_do_periodo(parametros.data_inicio, parametros.data_fim)
         cronometro = Cronometro()
         with cronometro.medir("carregar_bases"):
-            bases = self._carregar(competencias)
+            bases, lidas = self._carregar(competencias, referencia)
+        resumo_referencia = _resumo_referencia(referencia, lidas)
         fontes = self._campanhas_da_especificacao() + list(campanhas or [])
         periodos = calcular_periodos(parametros, bases.comissoes, fontes)
         conflitos = detectar_conflitos(parametros, fontes)
@@ -109,29 +112,48 @@ class SimuladorCampanha:
         contexto = ContextoGeracao(parametros, competencias, _amostras(bases, baseline))
         with cronometro.medir("conferir"):
             conferencia = self._executar_referencia(contexto, bases, baseline)
-        aprovada = self._gerar_e_executar(contexto, bases, baseline, conferencia, cronometro)
+        aprovada = self._gerar_e_executar(contexto, bases, baseline, conferencia, cronometro, alertas)
         with cronometro.medir("resumir"):
-            resultado = self._resumir(regra.rule_id, contexto, bases, baseline, aprovada)
+            resultado = self._resumir(
+                regra.rule_id, contexto, bases, baseline, aprovada, fontes, resumo_referencia,
+            )
         trilha = montar_trilha_simulacao(ExecucaoSimulada(
             parametros=parametros, competencias=competencias, bases=bases, baseline=baseline,
             modelo=_modelo_da_ia(aprovada), tentativas=aprovada.numero,
             conferido=CONFERIDO in aprovada.observacao, usou_referencia=USOU_REFERENCIA in aprovada.observacao,
             linhas_executadas=len(aprovada.comparacao), totais=resultado.totais,
             campanhas=fontes_da_vigente(fontes, periodos), tempos=cronometro.tempos,
+            referencia=resumo_referencia,
         ))
         return resultado.model_copy(update={
-            "comissao_periodo": periodos, "conflitos": conflitos, "trilha": trilha, "alertas": list(self._alertas),
+            "comissao_periodo": periodos, "conflitos": conflitos, "trilha": trilha, "alertas": list(alertas),
         })
 
     def _campanhas_da_especificacao(self) -> list[CampanhaContexto]:
         return self._especificacao.campanhas() if self._especificacao else []
 
-    def _carregar(self, competencias: list[str]) -> BasesSimulacao:
-        bases = self._fonte_bases.carregar(competencias)
-        sem_dados = sorted(set(competencias) - set(bases.rh["competencia"]))
+    def _ler_referencia(self, regra: RegraCampanha, inicio: date, fim: date) -> ReferenciaCalculo | None:
+        valores = {p.key: p.value for p in regra.parametros}
+        referencia, erros = ler_referencia(valores, inicio, fim, self._hoje())
+        if erros:
+            raise RegraInvalidaError(erros)
+        return referencia
+
+    def _carregar(
+        self, competencias: list[str], referencia: ReferenciaCalculo | None,
+    ) -> tuple[BasesSimulacao, list[str]]:
+        """As bases do período e as competências lidas: as da referência, quando o período é futuro."""
+        lidas = referencia.competencias_lidas(competencias) if referencia else competencias
+        bases = self._fonte_bases.carregar(lidas)
+        sem_dados = sorted(set(lidas) - set(bases.rh["competencia"]))
+        if sem_dados and referencia:
+            raise SimulacaoFalhouError("dados", f"Sem base de RH para {sem_dados} (referência); "
+                                                "importe essas competências ou escolha outro mês de referência")
         if sem_dados:
             raise SimulacaoFalhouError("dados", f"Sem base de RH para {sem_dados}; importe essas competências")
-        return bases
+        if referencia:
+            bases = deslocar_bases(bases, referencia.meses, referencia.fator)
+        return bases, lidas
 
     def _executar_referencia(
         self, contexto: ContextoGeracao, bases: BasesSimulacao, baseline: pd.DataFrame,
@@ -144,6 +166,7 @@ class SimuladorCampanha:
     def _gerar_e_executar(
         self, contexto: ContextoGeracao, bases: BasesSimulacao, baseline: pd.DataFrame,
         conferencia: TentativaAprovada | None, cronometro: Cronometro,
+        alertas: list[dict[str, Any]],
     ) -> TentativaAprovada:
         erro: str | None = None
         codigo: CodigoGerado | None = None
@@ -159,13 +182,12 @@ class SimuladorCampanha:
                     conferir_contra_referencia(comparacao, conferencia.comparacao)
                 return TentativaAprovada(codigo, comparacao, numero, CONFERIDO)
             except CodigoInseguroError as falha:
-                for a in falha.achados:
-                    self._alertas.append({
-                        "tipo": "codigo_inseguro",
-                        "linha": a.linha,
-                        "descricao": a.descricao,
-                        "mensagem": f"Código Python suspeito na linha {a.linha}: {a.descricao}",
-                    })
+                alertas.append({
+                    "tipo": "codigo_inseguro",
+                    "linha": falha.linha,
+                    "descricao": falha.descricao,
+                    "mensagem": f"Código Python suspeito na linha {falha.linha}: {falha.descricao}",
+                })
                 erro = f"{type(falha).__name__}: {falha}"
             # Qualquer falha da tentativa (LLM fora/429, código inválido, retorno com tipo errado)
             # vira nova tentativa e, no fim, um 422 com a causa, nunca um 500 genérico.
@@ -174,19 +196,15 @@ class SimuladorCampanha:
         if conferencia is not None:
             return replace(conferencia, numero=self._max_tentativas, observacao=f"{USOU_REFERENCIA} Último erro: {erro}")
         raise SimulacaoFalhouError(
-            "seguranca_codigo" if self._alertas else "geracao_codigo",
+            "seguranca_codigo" if alertas else "geracao_codigo",
             erro or "sem detalhe",
             codigo.fonte if codigo else None,
-            alertas=self._alertas,
+            alertas=alertas,
         )
 
     def _executar(
         self, codigo: CodigoGerado, contexto: ContextoGeracao, bases: BasesSimulacao, baseline: pd.DataFrame,
     ) -> pd.DataFrame:
-        achados = analisar_seguranca(codigo.fonte)
-        if achados:
-            descricoes = "; ".join(f"linha {a.linha}: {a.descricao}" for a in achados)
-            raise CodigoInseguroError(f"Código suspeito detectado: {descricoes}", achados=achados)
         execucao = self._runner.executar(codigo.fonte, bases.como_dict(), baseline, contexto.competencias)
         if not execucao.ok or execucao.apuracao_simulada is None or execucao.contribuicoes is None:
             raise ExecucaoFalhouError(f"{execucao.status}: {execucao.mensagem}")
@@ -195,29 +213,60 @@ class SimuladorCampanha:
 
     def _resumir(
         self, rule_id: str, contexto: ContextoGeracao, bases: BasesSimulacao,
-        baseline: pd.DataFrame, aprovada: TentativaAprovada,
+        baseline: pd.DataFrame, aprovada: TentativaAprovada, fontes: list[CampanhaContexto],
+        referencia: ReferenciaSimulacao | None = None,
     ) -> ResultadoSimulacao:
         comparacao, parametros = aprovada.comparacao, contexto.parametros
         totais = calcular_totais(comparacao)
         orcamento = avaliar_orcamento(totais, parametros.orcamento_limite)
         por_marca = quebrar_por(comparacao, "cod_marca")
         meta = avaliar_meta(bases.vendas, parametros)
+        na_meta = self._simular_na_meta(contexto, bases, fontes, meta)
         custo_com = self._custo_com(contexto, bases, baseline)
         ajustes = calcular_ajustes(bases.rh, bases.intercorrencias)
+        aviso_pendentes = aviso_intercorrencias_pendentes(bases.intercorrencias_pendentes)
         resultado = ResultadoSimulacao(
             rule_id=rule_id, competencias=contexto.competencias, totais=totais,
             por_marca=por_marca, por_cargo=quebrar_por(comparacao, "cod_cargo"),
             orcamento=orcamento, meta=meta, retorno=avaliar_retorno(totais, meta),
             impacto=medir_impacto(comparacao), maiores_lojas=maiores_lojas(comparacao),
             cenarios=propor_cenarios(parametros, totais.diferenca, orcamento, por_marca, custo_com),
-            ressalvas=RESSALVAS, codigo=aprovada.codigo.fonte, origem_codigo=aprovada.codigo.origem,
-            tentativas=aprovada.numero, explicacao="", observacao=aprovada.observacao,
+            ressalvas=montar_ressalvas(bases.intercorrencias_pendentes), codigo=aprovada.codigo.fonte,
+            origem_codigo=aprovada.codigo.origem, tentativas=aprovada.numero, explicacao="",
+            observacao=aprovada.observacao,
             apuracao_por_pessoa=montar_apuracao_por_pessoa(comparacao, ajustes),
             regras_base_aplicadas=contar_regras_aplicadas(ajustes),
             pessoas_no_piso=contar_pessoas_no_piso(comparacao, ajustes),
+            na_meta=na_meta, referencia=referencia,
         )
         resumo = resultado.model_dump(include=CAMPOS_EXPLICACAO)
-        return resultado.model_copy(update={"explicacao": self._explicador.explicar(resumo)})
+        if aviso_pendentes:
+            resumo["aviso_pendentes"] = aviso_pendentes
+        explicacao = self._explicador.explicar(resumo)
+        if aviso_pendentes and aviso_pendentes not in explicacao:
+            explicacao = f"{explicacao} {aviso_pendentes}." if explicacao else f"{aviso_pendentes}."
+        return resultado.model_copy(update={"explicacao": explicacao})
+
+    def _simular_na_meta(
+        self, contexto: ContextoGeracao, bases: BasesSimulacao,
+        fontes: list[CampanhaContexto], meta: AtingimentoMeta,
+    ) -> SimulacaoNaMeta | None:
+        """Simula a campanha com vendas escaladas até a meta informada (A6-93)."""
+        fator = fator_na_meta(meta)
+        if fator is None:
+            return None
+        bases_escaladas = escalar_vendas(bases, contexto.parametros, fator)
+        try:
+            baseline_escalado = calcular_baseline_vigente(bases_escaladas, fontes)
+            codigo = self._recalculo.gerar(contexto, None)
+            comparacao = self._executar(codigo, contexto, bases_escaladas, baseline_escalado)
+        except (ExecucaoFalhouError, AssercaoViolada):
+            # A simulação na meta é acessória: se falhar, a simulação segue sem ela (A6-93).
+            return None
+        vendas_na_meta = avaliar_meta(bases_escaladas.vendas, contexto.parametros).vendas_periodo
+        return montar_simulacao_na_meta(
+            fator, vendas_na_meta, calcular_totais(comparacao), contexto.parametros.orcamento_limite,
+        )
 
     def _custo_com(self, contexto: ContextoGeracao, bases: BasesSimulacao, baseline: pd.DataFrame) -> SimularCusto:
         """Simula de novo, com o código determinístico, a mesma regra com outros parâmetros."""
@@ -229,6 +278,15 @@ class SimuladorCampanha:
                 return None
             return calcular_totais(comparacao).diferenca
         return simular_custo
+
+
+def _resumo_referencia(referencia: ReferenciaCalculo | None, lidas: list[str]) -> ReferenciaSimulacao | None:
+    if referencia is None:
+        return None
+    return ReferenciaSimulacao(
+        competencia_referencia=referencia.competencia, pct_crescimento=referencia.pct_crescimento,
+        competencias_lidas=lidas, descricao=referencia.descrever(),
+    )
 
 
 def _modelo_da_ia(aprovada: TentativaAprovada) -> str:

@@ -50,7 +50,7 @@ def montar_trilha_chat(messages: list[BaseMessage], modelo_padrao: str) -> dict[
     passos = [_passo(ordem, chamada, retornos.get(chamada["id"])) for ordem, chamada in enumerate(chamadas, start=1)]
     eventos = [
         {
-            "sql": p.sql or p.sql_executado,
+            "sql": p.sql_executado,
             "motivo": p.motivo or p.mensagem_erro,
             "horario": p.horario,
             "status": p.status or "bloqueada",
@@ -93,7 +93,6 @@ def _passo_consulta(ordem: int, resultado: dict[str, Any]) -> PassoTrilha:
         "ordem": ordem, "ferramenta": NOME_TOOL_CONSULTA, "tabelas_acessadas": tabelas,
         "competencias": competencias, "filtros": texto_dos_filtros(resultado.get("filtros")),
         "sql_executado": sql,
-        "sql": sql,
         "tempo_ms": _inteiro(resultado.get("tempo")),
     }
     status = resultado.get("status")

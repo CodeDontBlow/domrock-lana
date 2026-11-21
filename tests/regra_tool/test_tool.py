@@ -37,6 +37,39 @@ def test_tool_guarda_a_data_ja_informada_e_pede_a_outra() -> None:
     assert "periodo" in mensagem.artifact["faltantes"]
 
 
+def _valor(mensagem: ToolMessage, key: str) -> object:
+    return next(p for p in mensagem.artifact["parametros"] if p["key"] == key)["value"]
+
+
+def test_tool_sugere_a_referencia_no_periodo_futuro_para_a_lana_confirmar() -> None:
+    # Ano distante para o teste não depender da data de hoje; a regra é a mesma da Black Friday 2026.
+    mensagem = _chamar({"comando_original": "+1% na black friday de 2099",
+                        "data_inicio": "2099-11-24", "data_fim": "2099-11-30"})
+
+    conteudo = json.loads(mensagem.content)
+    assert conteudo["referencia_sugerida"] == "2098-11"
+    assert _valor(mensagem, "competencia_referencia") == "2098-11"
+    assert _valor(mensagem, "pct_crescimento") == 0.0
+    assert "competencia_referencia" not in conteudo["faltantes"]
+
+
+def test_tool_registra_a_referencia_confirmada_sem_sugerir_de_novo() -> None:
+    mensagem = _chamar({"comando_original": "pode usar nov/2098 com 10%",
+                        "data_inicio": "2099-11-24", "data_fim": "2099-11-30",
+                        "competencia_referencia": "2098-11", "pct_crescimento": 10.0})
+
+    assert json.loads(mensagem.content)["referencia_sugerida"] is None
+    assert _valor(mensagem, "pct_crescimento") == 10.0
+
+
+def test_tool_nao_sugere_referencia_no_periodo_historico() -> None:
+    mensagem = _chamar({"comando_original": "+1% na black friday",
+                        "data_inicio": "2025-11-24", "data_fim": "2025-11-30"})
+
+    assert json.loads(mensagem.content)["referencia_sugerida"] is None
+    assert _valor(mensagem, "competencia_referencia") is None
+
+
 def test_extrair_regra_pega_o_ultimo_artifact_do_turno() -> None:
     from app.agent.service import extrair_regra
 

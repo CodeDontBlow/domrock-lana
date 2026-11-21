@@ -294,3 +294,50 @@ def test_intercorrencias_vazias_estrutura() -> None:
     assert df.empty
     assert pd.api.types.is_datetime64_any_dtype(df["data_inicio"])
     assert pd.api.types.is_datetime64_any_dtype(df["data_fim"])
+
+
+def test_gherkin_matric58_afastamento_16_dias_em_julho_aplica_5f_com_teto_15_dias() -> None:
+    rh = pd.DataFrame([{
+        "matricula": "MATRIC-58", "competencia": "2025-07", "cod_loja": "1", "cod_marca": "10",
+        "cod_cargo": "100", "data_admissao": "2020-01-01", "data_demissao": None,
+    }])
+    inter = pd.DataFrame([{
+        "matricula": "MATRIC-58", "tipo": "afastamento",
+        "data_inicio": pd.to_datetime("2025-07-10"), "data_fim": pd.to_datetime("2025-07-25"),
+    }])
+
+    ajustes = calcular_ajustes(rh, inter)
+    ajuste = ajustes[("MATRIC-58", "2025-07")]
+
+    # Julho tem 31 dias; 16 dias afastado (10/07 a 25/07) -> 15 trabalhados, teto de 15 remunerados -> fator 30/15 = 2.
+    assert ajuste.fator == Fraction(30, 15)
+    assert ajuste.aplica_piso is True
+    assert ajuste.regras == (RegraAplicada("5f", "5f — afastamento de 10/07 a 25/07: 16 dias, 15 remunerados"),)
+    assert ajustar_comissao(2000.0, ajuste) == 4000.0
+    assert ajustar_comissao(1000.0, ajuste) == 3500.0
+
+
+def test_regras_provisorias_cobertura_loja_e_licenca_maternidade_com_datas_nulas_nao_quebram() -> None:
+    rh = pd.DataFrame([
+        {"matricula": "M_COB", "competencia": "2025-07", "cod_loja": "1", "cod_marca": "10",
+         "cod_cargo": "100", "data_admissao": "2020-01-01", "data_demissao": None},
+        {"matricula": "M_MAT_SEM_FIM", "competencia": "2025-07", "cod_loja": "1", "cod_marca": "10",
+         "cod_cargo": "100", "data_admissao": "2020-01-01", "data_demissao": None},
+        {"matricula": "M_MAT_SEM_INICIO", "competencia": "2025-07", "cod_loja": "1", "cod_marca": "10",
+         "cod_cargo": "100", "data_admissao": "2020-01-01", "data_demissao": None},
+        {"matricula": "M_FERIAS", "competencia": "2025-07", "cod_loja": "1", "cod_marca": "10",
+         "cod_cargo": "100", "data_admissao": "2020-01-01", "data_demissao": None},
+    ])
+    inter = pd.DataFrame([
+        {"matricula": "M_COB", "tipo": "cobertura_loja", "data_inicio": pd.NaT, "data_fim": pd.NaT},
+        {"matricula": "M_MAT_SEM_FIM", "tipo": "licenca_maternidade", "data_inicio": pd.to_datetime("2025-07-05"), "data_fim": pd.NaT},
+        {"matricula": "M_MAT_SEM_INICIO", "tipo": "licenca_maternidade", "data_inicio": pd.NaT, "data_fim": pd.to_datetime("2025-07-20")},
+        {"matricula": "M_FERIAS", "tipo": "ferias", "data_inicio": pd.to_datetime("2025-07-01"), "data_fim": pd.to_datetime("2025-07-10")},
+    ])
+
+    ajustes = calcular_ajustes(rh, inter)
+
+    assert ("M_COB", "2025-07") not in ajustes
+    assert ("M_MAT_SEM_FIM", "2025-07") not in ajustes
+    assert ("M_MAT_SEM_INICIO", "2025-07") not in ajustes
+    assert ajustes[("M_FERIAS", "2025-07")].fator == Fraction(21, 31)

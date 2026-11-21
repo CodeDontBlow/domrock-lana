@@ -212,19 +212,19 @@ def _conferir_resposta_do_turno(
     )
 
 
-def extrair_alertas(messages: list[BaseMessage], trilha: dict[str, Any] | None) -> list[dict[str, Any]]:
+def extrair_alertas(trilha: dict[str, Any] | None) -> list[dict[str, Any]]:
     """Extrai alertas de segurança ocorridos no turno (ex.: consultas bloqueadas)."""
     alertas = []
-    if trilha and "passos" in trilha:
-        for p in trilha["passos"]:
-            if p.get("status") == "bloqueada" or (p.get("ferramenta") == "consultar_banco" and p.get("motivo")):
+    if trilha and "eventos" in trilha:
+        for evento in trilha["eventos"]:
+            if evento.get("status") == "bloqueada":
                 alertas.append({
                     "tipo": "consulta_bloqueada",
-                    "sql": p.get("sql") or p.get("sql_executado"),
-                    "motivo": p.get("motivo") or p.get("mensagem_erro"),
-                    "horario": p.get("horario"),
+                    "sql": evento.get("sql"),
+                    "motivo": evento.get("motivo"),
+                    "horario": evento.get("horario"),
                     "status": "bloqueada",
-                    "mensagem": f"Consulta SQL bloqueada por segurança: {p.get('motivo') or p.get('mensagem_erro')}",
+                    "mensagem": f"Consulta SQL bloqueada por segurança: {evento.get('motivo')}",
                 })
     return alertas
 
@@ -245,7 +245,7 @@ def _montar_resultado_turno(
         "events": get_events(messages),
         "regra": regra_do_turno,
         "trilha": trilha,
-        "alertas": extrair_alertas(messages, trilha),
+        "alertas": extrair_alertas(trilha),
     }
 
 

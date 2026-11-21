@@ -6,7 +6,6 @@ from functools import lru_cache
 
 from app.core.config import extract_text, get_ai_model
 from app.core.db import executar_select
-from app.core.trilha import gravar_evento_trilha
 from app.tools.dtos import calcular_tempo_ms
 from app.tools.query_tool.dtos import QueryRequestBody, QueryResponseBody
 from app.tools.query_tool.guard import LIMITE_LINHAS, SqlInseguro, extrair_metadados_sql, validar
@@ -83,7 +82,6 @@ def executar(body: QueryRequestBody) -> QueryResponseBody:
             "horario": horario_bloqueio,
             "status": "bloqueada",
         }
-        gravar_evento_trilha(evento_bloqueio)
         return QueryResponseBody(
             status="bloqueado", 
             sql_gerado=sql, 

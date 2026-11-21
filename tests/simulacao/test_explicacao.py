@@ -144,3 +144,79 @@ def test_explicar_sem_orcamento_redige_com_a_llm_e_nao_cai_no_texto_padrao() -> 
     modelo = FakeListChatModel(responses=[TEXTO_LIMPO])
 
     assert ExplicadorLlm(modelo).explicar(SEM_ORCAMENTO) == TEXTO_LIMPO
+
+
+def test_fatos_incluem_aviso_de_intercorrencias_pendentes() -> None:
+    aviso = "1 intercorrência pendente de aprovação não foi considerada"
+    fatos = " ".join(fatos_da_simulacao({**RESUMO, "aviso_pendentes": aviso}))
+
+    assert aviso in fatos
+    assert cliches_encontrados(aviso) == []
+
+
+def test_fatos_com_na_meta_aparecem_entre_custo_extra_e_orcamento() -> None:
+    # A6-93: o fato da meta-alvo fica logo depois do custo extra e antes do orçamento.
+    resumo = {
+        **RESUMO,
+        "na_meta": {
+            "fator": 4.5,
+            "vendas_na_meta": 1500000.0,
+            "comissao_sem_campanha": 50000.0,
+            "comissao_com_campanha": 79512.34,
+            "custo_adicional": 29512.34,
+            "cabe_no_orcamento": True,
+        },
+    }
+    fatos = " ".join(fatos_da_simulacao(resumo))
+
+    texto_na_meta = (
+        "Se a venda chegar à meta de R$ 1.500.000,00, o custo extra fica em R$ 29.512,34. "
+        "Esse custo cabe no orçamento."
+    )
+    assert texto_na_meta in fatos
+
+    posicoes = [fatos.index("Custo extra"), fatos.index(texto_na_meta), fatos.index("Não cabe no orçamento")]
+    assert posicoes == sorted(posicoes)
+
+
+def test_fatos_com_na_meta_e_orcamento_estourado_diz_que_passa() -> None:
+    resumo = {
+        **RESUMO,
+        "na_meta": {
+            "fator": 4.5,
+            "vendas_na_meta": 1500000.0,
+            "comissao_sem_campanha": 50000.0,
+            "comissao_com_campanha": 79512.34,
+            "custo_adicional": 29512.34,
+            "cabe_no_orcamento": False,
+        },
+    }
+    fatos = " ".join(fatos_da_simulacao(resumo))
+
+    assert "Esse custo passa do orçamento." in fatos
+
+
+def test_fatos_com_na_meta_sem_orcamento_nao_opina_sobre_orcamento() -> None:
+    resumo = {
+        **SEM_ORCAMENTO,
+        "meta": {"meta_vendas": 3000000.0, "vendas_periodo": 2406125.93, "pct_atingimento": 80.2, "atingida": False},
+        "na_meta": {
+            "fator": 1.2468,
+            "vendas_na_meta": 3000000.0,
+            "comissao_sem_campanha": 600000.0,
+            "comissao_com_campanha": 629512.34,
+            "custo_adicional": 29512.34,
+            "cabe_no_orcamento": None,
+        },
+    }
+    fatos = " ".join(fatos_da_simulacao(resumo))
+
+    assert "Se a venda chegar à meta de R$ 3.000.000,00, o custo extra fica em R$ 29.512,34." in fatos
+    assert "Esse custo cabe no orçamento" not in fatos
+    assert "Esse custo passa do orçamento" not in fatos
+
+
+def test_fatos_sem_na_meta_nao_mencionam_cenario_na_meta() -> None:
+    fatos = " ".join(fatos_da_simulacao(RESUMO))
+
+    assert "Se a venda chegar à meta" not in fatos

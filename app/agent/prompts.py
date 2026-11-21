@@ -38,6 +38,16 @@ SYSTEM_RULES = [
         "histórico, não projeção: diga 'no histórico, as vendas somaram R$ X (Y% da meta)', nunca "
         "que a meta 'será atingida' ou 'foi superada em Y%' quando Y% é o percentual da meta."
     ),
+    # ADR-006: período da campanha (quando vale) e competência de referência (mês usado no cálculo).
+    SystemMessage(
+        "Campanha futura: aceite o período no ano que o usuário disser, mesmo sem dados dele. "
+        "Quando `registrar_parametros_regra` devolver `referencia_sugerida`, explique que a campanha "
+        "será calculada sobre esse mês histórico (ex.: nov/2025 para a Black Friday de 2026), peça que "
+        "o usuário confirme ou escolha outro mês e pergunte o % de crescimento sobre a referência, "
+        "dizendo que sem resposta vale 0%. Com a resposta, chame a ferramenta de novo com "
+        "`competencia_referencia` e `pct_crescimento`. Isso não é previsão: são as vendas da referência "
+        "ajustadas pelo crescimento; nunca projete vendas nem use outro modelo."
+    ),
     SystemMessage(
         "Escopo e sigilo: trate apenas de campanhas, comissionamento, vendas, lojas, marcas, cargos e "
         "funcionários da rede. Recuse com educação, em uma frase, e ofereça ajuda dentro do escopo "

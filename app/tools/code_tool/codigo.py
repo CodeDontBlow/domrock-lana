@@ -28,6 +28,22 @@ class CodigoInvalidoError(ValueError):
     """A resposta da LLM não traz um `aplicar_regra` válido e seguro."""
 
 
+class CodigoInseguroError(CodigoInvalidoError):
+    """O código gerado viola regras de segurança (import, nome ou atributo proibido)."""
+
+    def __init__(
+        self,
+        mensagem: str = "",
+        linha: int = 1,
+        descricao: str | None = None,
+    ) -> None:
+        desc = descricao if descricao is not None else mensagem
+        msg = mensagem or desc
+        super().__init__(msg)
+        self.linha = linha
+        self.descricao = desc
+
+
 def extrair_codigo(resposta: str) -> str:
     """Devolve o fonte do único bloco ```python da resposta, já validado.
 
@@ -56,28 +72,30 @@ def validar_codigo(fonte: str) -> None:
 
 
 def _validar_no(no: ast.AST) -> None:
+    linha = getattr(no, "lineno", 1)
     if isinstance(no, ast.Import):
-        _validar_imports([alias.name for alias in no.names])
+        _validar_imports([alias.name for alias in no.names], linha=linha)
     elif isinstance(no, ast.ImportFrom):
         modulo = no.module or ""
-        _validar_imports([modulo, *(f"{modulo}.{alias.name}" for alias in no.names)])
+        _validar_imports([modulo, *(f"{modulo}.{alias.name}" for alias in no.names)], linha=linha)
     elif isinstance(no, ast.Name) and (no.id in NOMES_PROIBIDOS or no.id.startswith("__")):
-        raise CodigoInvalidoError(f"Uso proibido de '{no.id}' na linha {no.lineno}")
+        msg = f"Uso proibido de '{no.id}' na linha {linha}"
+        raise CodigoInseguroError(msg, linha=linha, descricao=msg)
     elif isinstance(no, ast.Attribute) and _atributo_proibido(no.attr):
-        raise CodigoInvalidoError(f"Acesso proibido ao atributo '{no.attr}' na linha {no.lineno}")
+        msg = f"Acesso proibido ao atributo '{no.attr}' na linha {linha}"
+        raise CodigoInseguroError(msg, linha=linha, descricao=msg)
 
 
 def _atributo_proibido(nome: str) -> bool:
     return nome in ATRIBUTOS_PROIBIDOS or nome.startswith(PREFIXOS_ATRIBUTO_PROIBIDOS)
 
 
-def _validar_imports(modulos: list[str]) -> None:
+def _validar_imports(modulos: list[str], linha: int) -> None:
     for modulo in modulos:
         raiz, *submodulos = modulo.split(".")
         if raiz not in IMPORTS_PERMITIDOS or any(_atributo_proibido(parte) for parte in submodulos):
-            raise CodigoInvalidoError(
-                f"Import proibido: '{modulo}'; permitidos: {sorted(IMPORTS_PERMITIDOS)}"
-            )
+            msg = f"Import proibido: '{modulo}'; permitidos: {sorted(IMPORTS_PERMITIDOS)}"
+            raise CodigoInseguroError(msg, linha=linha, descricao=msg)
 
 
 def _define_aplicar_regra(modulo: ast.Module) -> bool:

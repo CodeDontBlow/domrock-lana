@@ -247,16 +247,26 @@ def _validar_e_extrair_eventos(intercorrencias: pd.DataFrame) -> tuple[dict[str,
     eventos: dict[str, list[_Evento]] = {}
     for linha in intercorrencias.itertuples(index=False):
         matricula, tipo = str(linha.matricula), str(linha.tipo)
+        # Regras provisórias aguardando definição do PO: nunca derrubam a apuração com ValueError
+        # quando vêm da base da especificação sem data_inicio ou data_fim.
+        if tipo == "cobertura_loja":
+            continue
+        if tipo == "licenca_maternidade":
+            inicio, fim = _para_data(linha.data_inicio), _para_data(linha.data_fim)
+            if inicio is None or fim is None or fim < inicio:
+                continue
+            eventos.setdefault(matricula, []).append(_Evento(tipo, inicio, fim))
+            continue
         inicio, fim = _datas_validadas(matricula, tipo, linha.data_inicio, linha.data_fim)
         if tipo == "demissao":
             demissoes[matricula] = inicio
-        elif tipo != "cobertura_loja" and fim is not None:
+        elif fim is not None:
             eventos.setdefault(matricula, []).append(_Evento(tipo, inicio, fim))
     return demissoes, eventos
 
 
 def _datas_validadas(matricula: str, tipo: str, inicio_bruto: object, fim_bruto: object) -> tuple[date, date | None]:
-    # demissao (correção da data, dec-090) e cobertura_loja podem vir sem data_fim; os demais não.
+    # demissao (correção da data, dec-090) pode vir sem data_fim; afastamento e ferias não.
     inicio, fim = _para_data(inicio_bruto), _para_data(fim_bruto)
     if inicio is None:
         raise ValueError(f"Intercorrência de {matricula!r} com data_inicio nula; esperado data YYYY-MM-DD")
@@ -265,7 +275,7 @@ def _datas_validadas(matricula: str, tipo: str, inicio_bruto: object, fim_bruto:
             f"Data de fim ({fim.isoformat()}) anterior à data de início ({inicio.isoformat()}) "
             f"na intercorrência de {matricula!r}; esperado fim >= inicio"
         )
-    if fim is None and tipo not in ("demissao", "cobertura_loja"):
+    if fim is None and tipo != "demissao":
         raise ValueError(f"Intercorrência {tipo!r} de {matricula!r} sem data_fim; esperado data YYYY-MM-DD")
     return inicio, fim
 
