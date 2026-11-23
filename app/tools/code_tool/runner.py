@@ -5,10 +5,13 @@ de memória, CPU e disco e restringe builtins/imports. Limitação aceita: roda 
 da Lana e tem rede. A Sprint 2 pode trocar por um container efêmero sem rede, implementando o
 mesmo protocolo `CodeRunner`.
 """
+import importlib.util
 import json
+import logging
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
@@ -19,6 +22,17 @@ import pandas as pd
 CAMINHO_HARNESS = Path(__file__).with_name("harness.py")
 TIMEOUT_PADRAO_S = 60
 LIMITE_STDERR = 1000
+
+logger = logging.getLogger(__name__)
+
+
+def limites_de_recursos_disponiveis() -> bool:
+    """Diz se o harness consegue limitar memória, CPU e disco (módulo `resource`, só Unix).
+
+    O harness roda com o mesmo `sys.executable`, então a resposta daqui vale para ele.
+    Ex.: True no container Linux da Lana; False no Windows.
+    """
+    return importlib.util.find_spec("resource") is not None
 
 
 @dataclass(frozen=True)
@@ -45,8 +59,17 @@ class CodeRunner(Protocol):
 class SubprocessRunner:
     """Ex.: SubprocessRunner(timeout_s=30).executar(fonte, bases, baseline, ["2025-10"])"""
 
-    def __init__(self, timeout_s: int = TIMEOUT_PADRAO_S) -> None:
+    def __init__(
+        self, timeout_s: int = TIMEOUT_PADRAO_S,
+        tem_limites: Callable[[], bool] = limites_de_recursos_disponiveis,
+    ) -> None:
         self._timeout_s = timeout_s
+        if not tem_limites():
+            # A6-118: sem `resource` o harness não aplica os limites, e isso não pode passar calado.
+            logger.warning(
+                "Sandbox sem limites de memória, CPU e disco: módulo 'resource' indisponível em %s; "
+                "só o timeout de %ss vale", sys.platform, timeout_s,
+            )
 
     def executar(
         self, fonte: str, bases: dict[str, pd.DataFrame], apuracao_base: pd.DataFrame,

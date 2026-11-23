@@ -1,6 +1,11 @@
 """Executa o harness de verdade em subprocesso (~1 s por caso, por causa do import do pandas)."""
+import logging
+import sys
+
+import pytest
+
 from app.simulacao.baseline import calcular_baseline
-from app.tools.code_tool.runner import SubprocessRunner
+from app.tools.code_tool.runner import SubprocessRunner, limites_de_recursos_disponiveis
 from tests.fakes import bases_pequenas, fonte_modelo, parametros_black_friday
 
 CABECALHO = "def aplicar_regra(bases, apuracao_base, competencias):\n"
@@ -72,3 +77,29 @@ def test_runner_bloqueia_import_e_open_em_tempo_de_execucao() -> None:
 
         assert execucao.status == "erro_codigo"
         assert "ImportError" in execucao.mensagem or "NameError" in execucao.mensagem
+
+
+def sem_modulo_resource() -> bool:
+    """Simula o Windows, onde o harness não consegue aplicar os limites."""
+    return False
+
+
+def com_modulo_resource() -> bool:
+    return True
+
+
+def test_limites_de_recursos_so_faltam_no_windows() -> None:
+    assert limites_de_recursos_disponiveis() is (sys.platform != "win32")
+
+
+def test_runner_avisa_no_log_quando_o_sandbox_roda_sem_limites(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING, logger="app.tools.code_tool.runner"):
+        SubprocessRunner(timeout_s=7, tem_limites=sem_modulo_resource)
+    assert "módulo 'resource' indisponível" in caplog.text
+    assert "timeout de 7s" in caplog.text
+
+
+def test_runner_nao_avisa_quando_os_limites_valem(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING, logger="app.tools.code_tool.runner"):
+        SubprocessRunner(tem_limites=com_modulo_resource)
+    assert caplog.text == ""
