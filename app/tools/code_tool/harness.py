@@ -14,6 +14,8 @@ Camadas (a validação AST em `codigo.py` é a primeira):
 import builtins
 import json
 import os
+# `resource` só existe em Unix (A6-118, PR #10): no Windows o harness roda sem os limites de
+# memória, CPU e disco, sobra só o timeout do runner, e o `SubprocessRunner` avisa no log.
 try:
     import resource
 except ImportError:

@@ -115,6 +115,8 @@ def gerar_e_executar(
                 "mensagem": f"Código Python suspeito na linha {falha.linha}: {falha.descricao}",
             })
             erro = f"{type(falha).__name__}: {falha}"
+        # Qualquer falha da tentativa (LLM fora/429, código inválido, retorno com tipo errado)
+        # vira nova tentativa e, no fim, um 422 com a causa, nunca um 500 genérico.
         except Exception as falha:
             erro = f"{type(falha).__name__}: {falha}"
     if conferencia is not None:
