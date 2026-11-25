@@ -26,6 +26,12 @@ def test_extrair_codigo_ou_valor():
     assert extrair_codigo_ou_valor("150") == "150"
     assert extrair_codigo_ou_valor("cargo 200") == "200"
     assert extrair_codigo_ou_valor("sem numero") == "sem numero"
+    assert extrair_codigo_ou_valor("LOJA-76") == "76"
+    assert extrair_codigo_ou_valor("MATRIC-33 na LOJA-76") == "76"
+    assert extrair_codigo_ou_valor("MATRIC-33 na loja 76") == "76"
+    assert extrair_codigo_ou_valor("VENDEDOR BALCAO") == "200"
+    assert extrair_codigo_ou_valor("GERENTE DE LOJA") == "150"
+    assert extrair_codigo_ou_valor("como Vendedor Loja") == "100"
 
 
 def test_normalizar_tipo():

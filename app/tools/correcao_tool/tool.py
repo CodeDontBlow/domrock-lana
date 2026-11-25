@@ -63,26 +63,54 @@ def registrar_solicitacao_correcao(
         competencia: Mês/ano da competência afetada no formato MM/yyyy (ex.: "10/2025" ou "11/2025").
         antes: Estado anterior incluindo a matrícula do funcionário (ex.: "MATRIC-38 na loja 5").
         depois: Estado novo solicitado incluindo a matrícula com comprimento similar ao 'antes' (ex.: "MATRIC-38 na loja 8").
-        motivo: Opcional. Motivo ou justificativa da alteração.
-        sql: Opcional. Código SQL de alteração gerado para avaliação dos supervisores.
+        motivo: Motivo ou justificativa da alteração. Faça o motivo conter o máximo de informaçõe possíveis
+        com o mínimo de linhas.
+        sql: Código SQL de alteração gerado para avaliação dos supervisores.
     """
     inicio = time.perf_counter()
     try:
         valor_antes = (antes or "").strip()
-        if not valor_antes and matricula and competencia:
+        cod_antes = extrair_codigo_ou_valor(valor_antes or antes)
+        cod_depois = extrair_codigo_ou_valor(depois)
+
+        if matricula:
             try:
                 dados_consulta = consultar_dados_funcionario_no_banco(matricula, competencia)
                 registros = dados_consulta.get("dados") or []
                 if registros and isinstance(registros, list) and len(registros) > 0:
                     item = registros[0]
-                    if "cod_loja" in item:
-                        valor_antes = f"loja {item['cod_loja']}"
-                    elif "descr_loja" in item:
-                        valor_antes = item["descr_loja"]
-                    elif "cod_cargo" in item:
-                        valor_antes = f"cargo {item['cod_cargo']}"
-                    elif "descr_cargo" in item:
-                        valor_antes = item["descr_cargo"]
+                    if not valor_antes:
+                        if "cod_loja" in item:
+                            valor_antes = f"loja {item['cod_loja']}"
+                            cod_antes = str(item["cod_loja"])
+                        elif "descr_loja" in item:
+                            valor_antes = str(item["descr_loja"])
+                            cod_antes = extrair_codigo_ou_valor(valor_antes)
+                        elif "cod_cargo" in item:
+                            valor_antes = f"cargo {item['cod_cargo']}"
+                            cod_antes = str(item["cod_cargo"])
+                        elif "descr_cargo" in item:
+                            valor_antes = str(item["descr_cargo"])
+                            cod_antes = extrair_codigo_ou_valor(valor_antes)
+                    else:
+                        # Proteção contra confusão de ID surrogate do banco vs cod_loja de negócio
+                        loja_id_banco = str(item.get("loja_id") or item.get("id") or "")
+                        cod_loja_banco = str(item.get("cod_loja") or "")
+                        if cod_loja_banco and cod_antes == loja_id_banco and cod_antes != cod_loja_banco:
+                            cod_antes = cod_loja_banco
+                            if f"loja {loja_id_banco}" in valor_antes:
+                                valor_antes = valor_antes.replace(f"loja {loja_id_banco}", f"loja {cod_loja_banco}")
+                            elif loja_id_banco in valor_antes:
+                                valor_antes = valor_antes.replace(loja_id_banco, cod_loja_banco)
+
+                        cargo_id_banco = str(item.get("cargo_id") or "")
+                        cod_cargo_banco = str(item.get("cod_cargo") or "")
+                        if cod_cargo_banco and cod_antes == cargo_id_banco and cod_antes != cod_cargo_banco:
+                            cod_antes = cod_cargo_banco
+                            if f"cargo {cargo_id_banco}" in valor_antes:
+                                valor_antes = valor_antes.replace(f"cargo {cargo_id_banco}", f"cargo {cod_cargo_banco}")
+                            elif cargo_id_banco in valor_antes:
+                                valor_antes = valor_antes.replace(cargo_id_banco, cod_cargo_banco)
             except Exception:
                 pass
 
@@ -98,8 +126,6 @@ def registrar_solicitacao_correcao(
         tipo_amigavel = normalizar_tipo(tipo)
         tipo_codigo = codigo_backend_tipo(tipo)
         matricula_limpa = matricula.strip().upper()
-        cod_antes = extrair_codigo_ou_valor(valor_antes or antes)
-        cod_depois = extrair_codigo_ou_valor(depois)
 
         motivo_final = (motivo or "").strip()
         if not motivo_final:

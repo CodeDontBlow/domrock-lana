@@ -19,18 +19,36 @@ MESES_PT = {
 }
 
 
+MAPEAMENTO_CARGOS = {
+    "vendedor balcao": "200",
+    "vendedor balcão": "200",
+    "gerente de loja": "150",
+    "gerente": "150",
+    "vendedor loja": "100",
+    "vendedor": "100",
+    "assistente de vendas": "300",
+    "assistente": "300",
+}
+
+
 def extrair_codigo_ou_valor(texto: str) -> str:
-    """Extrai o código numérico ou identificador de uma string como 'loja 5', 'loja 8', '100', 'MATRIC-38 na loja 5'."""
+    """Extrai o código numérico ou identificador de uma string como 'loja 5', 'loja 8', 'LOJA-76', '100', 'MATRIC-38 na loja 5'."""
     if not texto:
         return ""
     texto_limpo = texto.strip()
-    texto_sem_matricula = re.sub(r"MATRIC-\d+", "", texto_limpo, flags=re.IGNORECASE)
+    texto_sem_matricula = re.sub(r"MATRIC-\d+", "", texto_limpo, flags=re.IGNORECASE).strip()
     match = re.search(r"\b(\d+)\b", texto_sem_matricula)
     if match:
         return match.group(1)
     match_orig = re.search(r"\b(\d+)\b", texto_limpo)
     if match_orig:
         return match_orig.group(1)
+
+    t_lower = texto_sem_matricula.lower()
+    for cargo_desc, cod in MAPEAMENTO_CARGOS.items():
+        if cargo_desc in t_lower:
+            return cod
+
     return texto_limpo
 
 

@@ -104,3 +104,35 @@ def test_tool_reutiliza_query_tool_quando_antes_vazio(monkeypatch):
     assert artifact["valor_antes"] == "31"
     assert artifact["depois"] == "loja 8"
     assert "loja_id = (SELECT id FROM loja WHERE cod_loja = '31')" in artifact["sql"]
+
+
+def test_tool_corrige_id_surrogate_para_cod_loja_negocio(monkeypatch):
+    mock_retorno = QueryResponseBody(
+        status="sucesso",
+        dados=[{"loja_id": 9, "cod_loja": "76", "descr_loja": "LOJA-76"}],
+        tempo=10,
+        situacao="ok",
+        mensagem="ok",
+        tabelas=["loja", "funcionario_loja"],
+        competencias=["2025-07"],
+        filtros=None,
+        registros=1,
+        sql=None,
+    )
+    monkeypatch.setattr(
+        "app.tools.correcao_tool.consulta.executar_consulta_banco",
+        MagicMock(return_value=mock_retorno),
+    )
+
+    mensagem = _chamar_correcao({
+        "tipo": "Transferência de loja",
+        "matricula": "MATRIC-33",
+        "competencia": "10/2025",
+        "antes": "MATRIC-33 na loja 9",
+        "depois": "MATRIC-33 na loja 8",
+    })
+    artifact = mensagem.artifact
+    assert artifact["valor_antes"] == "76"
+    assert "76" in artifact["antes"]
+    assert artifact["valor_depois"] == "8"
+    assert "loja_id = (SELECT id FROM loja WHERE cod_loja = '76')" in artifact["sql"]
