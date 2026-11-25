@@ -15,8 +15,8 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str | None = None
     OPENROUTER_API_KEY: str | None = None
     GROQ_API_KEY: str | None = None
-    AI_PROVIDER: str
-    AI_MODEL: str
+    AI_PROVIDER: str = "GROQ"
+    AI_MODEL: str = "llama-3.3-70b-versatile"
     # Cadeia de reserva, em ordem: "PROVEDOR:modelo,PROVEDOR:modelo" (GEMINI, OPENROUTER ou GROQ).
     AI_FALLBACKS: str = ""
     # Tempo máximo por modelo; um provedor lento (ex.: OpenRouter gratuito) passa a vez ao próximo.
