@@ -2,6 +2,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from app.agent.router import router as agent_router
+from app.core.observability import configure_otel
 from app.simulacao.router import router as simulacao_router
 from app.grpc_server import serve_grpc  # Ajusta o caminho para onde está a tua função serve_grpc
 
@@ -21,6 +22,7 @@ async def lifespan(app: FastAPI):
         print("Servidor gRPC encerrado")
 
 app = FastAPI(title="lana-ai", lifespan=lifespan)
+configure_otel(app)
 
 # Mantém todos os teus routers HTTP ativos
 app.include_router(agent_router)

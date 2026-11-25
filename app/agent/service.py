@@ -11,6 +11,7 @@ from app.agent.graph import lana
 from app.agent.prompts import SYSTEM_RULES
 from app.agent.trilha import montar_trilha_chat
 from app.core.config import extract_text, get_settings
+from app.core.observability import get_langfuse_callbacks
 from app.tools.regra_tool.tool import NOME_TOOL_REGRA
 
 def _parse_tool_content(conteudo: Any) -> Any:
@@ -185,8 +186,10 @@ def lana_invoke(
         return _invocar_turno(thread_id, user_input, regra, historico)
 
 
-def _executar_grafo(entrada: list[BaseMessage]) -> list[BaseMessage]:
-    result = lana.invoke({"messages": entrada})
+def _executar_grafo(entrada: list[BaseMessage], thread_id: str | None = None) -> list[BaseMessage]:
+    callbacks = get_langfuse_callbacks(thread_id)
+    config = {"callbacks": callbacks} if callbacks else None
+    result = lana.invoke({"messages": entrada}, config=config)
     novas = result["messages"][len(entrada):]
     return novas if novas else [result["messages"][-1]]
 
@@ -236,7 +239,7 @@ def _invocar_turno(
 ) -> dict[str, Any]:
     historico_mensagens = _converter_historico(historico)
     entrada = _mensagens_de_entrada(user_input, regra, historico_mensagens)
-    messages = _executar_grafo(entrada)
+    messages = _executar_grafo(entrada, thread_id=thread_id)
     return _montar_resultado_turno(
         thread_id, messages, user_input, regra, historico_mensagens, historico
     )
