@@ -33,6 +33,8 @@ Front (Vue) ──► Backend (Spring) ──► Lana ──► PostgreSQL (pape
                                       └─────► Provedor de IA (Gemini, OpenRouter ou Groq)
 ```
 
+O fluxo interno e os nós do grafo LangGraph da Lana estão documentados em [`docs/grafo-lana.md`](docs/grafo-lana.md).
+
 ## 📢 Comunicação com o Backend (Spring)
 
 |  | Java (Spring) | Python (Lana) |
