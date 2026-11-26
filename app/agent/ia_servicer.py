@@ -109,11 +109,13 @@ def montar_resposta(turno: dict[str, Any]) -> ia_service_pb2.InvokeResponse:
 
     Ex.: montar_resposta({"response": "oi", "events": [], "regra": None, "trilha": None}).trilha_json -> ""
     """
+    alertas = turno.get("alertas")
     return ia_service_pb2.InvokeResponse(
         resposta=turno["response"],
         events_json=json.dumps(turno.get("events", []), ensure_ascii=False, default=str),
         regra_json=_json_ou_vazio(turno.get("regra")),
         trilha_json=_json_ou_vazio(turno.get("trilha")),
+        alertas_json=_json_ou_vazio(alertas) if alertas else "",
     )
 
 

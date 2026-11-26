@@ -48,7 +48,7 @@ def simular(body: SimulacaoRequest) -> ResultadoSimulacao | JSONResponse:
     except RegraInvalidaError as erro:
         return _falha("validacao", "Regra incompleta ou inválida", erros=erro.erros)
     except SimulacaoFalhouError as erro:
-        return _falha(erro.etapa, erro.mensagem, codigo=erro.codigo)
+        return _falha(erro.etapa, erro.mensagem, codigo=erro.codigo, alertas=getattr(erro, "alertas", []))
     except BaselineError as erro:
         return _falha("baseline", str(erro))
 

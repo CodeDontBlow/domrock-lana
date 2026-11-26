@@ -27,6 +27,10 @@ class PassoTrilha(BaseModel):
     tempo_ms: int = 0
     situacao: SituacaoPasso = "SUCESSO"
     mensagem_erro: str | None = None
+    # A6-95: campos de registro de segurança (ex: consulta bloqueada)
+    motivo: str | None = None
+    horario: str | None = None
+    status: str | None = None
 
 
 def competencia_por_extenso(competencia: str) -> str:

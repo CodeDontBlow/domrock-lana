@@ -12,11 +12,26 @@ LIMITE_LOJAS = 5
 RESSALVAS = [
     "Simulação sobre vendas que já aconteceram: supõe que as pessoas venderiam o mesmo com a regra nova.",
     "A comparação com a comissão atual é o número mais confiável; o total absoluto é apurado por nós, não é a folha oficial.",
-    "Admissão e demissão no mês (regras 5c e 5d) já entram na apuração; férias e afastamentos (5e a 5g) entram quando as intercorrências de RH forem carregadas.",
+    "Regras 5c a 5g e intercorrências de RH aprovadas entram na apuração; intercorrências pendentes de aprovação não são consideradas.",
 ]
 
 
-def gerar_premissas(parametros: ParametrosSimulacao) -> list[str]:
+def aviso_intercorrencias_pendentes(qtd: int) -> str | None:
+    """Aviso do Gherkin (#us21) quando há intercorrências pendentes na competência."""
+    if qtd <= 0:
+        return None
+    if qtd == 1:
+        return "1 intercorrência pendente de aprovação não foi considerada"
+    return f"{qtd} intercorrências pendentes de aprovação não foram consideradas"
+
+
+def montar_ressalvas(intercorrencias_pendentes: int = 0) -> list[str]:
+    """Ressalvas metodológicas acrescidas do aviso de pendentes, quando houver."""
+    aviso = aviso_intercorrencias_pendentes(intercorrencias_pendentes)
+    return [*RESSALVAS, aviso] if aviso else list(RESSALVAS)
+
+
+def gerar_premissas(parametros: ParametrosSimulacao, intercorrencias_pendentes: int = 0) -> list[str]:
     """Premissas da simulação baseadas nos parâmetros e nas ressalvas metodológicas."""
     premissas = []
 
@@ -36,7 +51,7 @@ def gerar_premissas(parametros: ParametrosSimulacao) -> list[str]:
         f"Período: de {parametros.data_inicio.strftime('%d/%m/%Y')} a {parametros.data_fim.strftime('%d/%m/%Y')}"
     )
     premissas.append(f"Acréscimo de comissão: +{parametros.pct_acrescimo}%")
-    premissas.extend(RESSALVAS)
+    premissas.extend(montar_ressalvas(intercorrencias_pendentes))
 
     return premissas
 
@@ -74,14 +89,21 @@ def avaliar_orcamento(totais: TotaisSimulacao, orcamento_limite: float | None) -
     )
 
 
+def mascara_vendas_periodo(vendas: pd.DataFrame, parametros: ParametrosSimulacao) -> pd.Series:
+    """Máscara booleana das vendas no período e marcas da campanha (A6-93).
+
+    Ex.: mascara_vendas_periodo(bases.vendas, parametros_black_friday()).sum() -> 2
+    """
+    inicio, fim = pd.Timestamp(parametros.data_inicio), pd.Timestamp(parametros.data_fim)
+    return vendas["data_venda"].between(inicio, fim) & vendas["cod_marca"].isin(parametros.marcas_alvo)
+
+
 def vendas_do_periodo(vendas: pd.DataFrame, parametros: ParametrosSimulacao) -> pd.DataFrame:
     """Vendas das marcas da campanha entre o início e o fim, não do mês inteiro (A6-70: "721 vendas no período").
 
     Ex.: len(vendas_do_periodo(bases.vendas, parametros_black_friday())) -> 721 no banco de 2025
     """
-    inicio, fim = pd.Timestamp(parametros.data_inicio), pd.Timestamp(parametros.data_fim)
-    no_periodo = vendas["data_venda"].between(inicio, fim) & vendas["cod_marca"].isin(parametros.marcas_alvo)
-    return vendas.loc[no_periodo]
+    return vendas.loc[mascara_vendas_periodo(vendas, parametros)]
 
 
 def avaliar_meta(vendas: pd.DataFrame, parametros: ParametrosSimulacao) -> AtingimentoMeta:

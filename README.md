@@ -33,6 +33,8 @@ Front (Vue) ──► Backend (Spring) ──► Lana ──► PostgreSQL (pape
                                       └─────► Provedor de IA (Gemini, OpenRouter ou Groq)
 ```
 
+O fluxo interno e os nós do grafo LangGraph da Lana estão documentados em [`docs/grafo-lana.md`](docs/grafo-lana.md).
+
 ## 📢 Comunicação com o Backend (Spring)
 
 |  | Java (Spring) | Python (Lana) |
@@ -73,6 +75,12 @@ domrock-lana/
 │   │   ├── query_tool/      # consultar_banco: pergunta → SQL validado → SELECT
 │   │   ├── regra_tool/      # registrar_parametros_regra: monta a ficha da campanha
 │   │   └── code_tool/       # Gera, valida e executa o código da regra
+│   ├── rag/                 # RAG e guardrail de escopo (A6-128)
+│   │   ├── corpus/          # Documentos Markdown fonte (especificação, capacidades)
+│   │   ├── trechos.py       # Fatiamento estrutural e hash do corpus
+│   │   ├── embeddings.py    # Adaptador FastEmbed para ChromaDB
+│   │   ├── base_vetorial.py # BaseChroma e protocolo BaseConhecimento
+│   │   └── grounding.py     # Avaliação do limiar, texto de busca e contexto documental
 │   └── simulacao/           # POST /simulacao: bases, comissão atual, cenários, resumo e explicação
 ├── tests/                   # pytest; usam fakes, não chamam a LLM nem o banco
 ├── docs/query_tool/         # Documentação da consultar_banco
@@ -100,6 +108,11 @@ A Lana lê o arquivo `.env` na raiz deste repositório (modelo em [`.env.example
 | `AI_TIMEOUT_S` | ❌ | `30` | Segundos por modelo antes de passar ao próximo da cadeia |
 | `DATABASE_URL` | Para chat com dados e simulação | - | Banco do backend com o papel `lana_leitura` (criado pela migração V3 do backend) |
 | `CODEGEN_MODO` | ❌ | `llm` | `llm`: a IA gera o código e ele é conferido; `modelo`: usa só o cálculo fixo (plano B) |
+| `RAG_ATIVO` | ❌ | `true` | Ativa o RAG com ChromaDB e guardrail de escopo antes do grafo |
+| `RAG_LIMIAR_DISTANCIA` | ❌ | `0.50` | Limiar máximo de distância cosseno para considerar a pergunta no escopo |
+| `RAG_TOP_K` | ❌ | `3` | Quantidade de trechos documentais mais próximos recuperados |
+| `RAG_PASTA_CHROMA` | ❌ | `data/chroma` | Diretório de persistência da base vetorial do ChromaDB |
+| `RAG_PASTA_MODELO` | ❌ | `data/modelos` | Diretório de cache do modelo de embeddings ONNX |
 
 As portas não vêm do `.env`: a HTTP é a do comando `uvicorn` (`--port`) e a gRPC é fixa em 50051 (`app/grpc_server.py`).
 
@@ -124,6 +137,18 @@ Erros que o backend precisa tratar:
 | gRPC | `RESOURCE_EXHAUSTED` | Cota do provedor de IA |
 | gRPC | `DEADLINE_EXCEEDED` | A Lana passou de 100 s |
 | gRPC | `INTERNAL` | Qualquer outro erro do agente |
+
+---
+
+## 🧠 RAG e Guardrail de Escopo (A6-128)
+
+A Lana utiliza RAG em duas fases com ChromaDB (`PersistentClient`, distância cosseno) e modelo local de embeddings `fastembed` (`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`, pré-baixado no Docker build):
+
+1. **Indexação (startup):** O corpus em `app/rag/corpus/` (um arquivo por fonte: especificação da Dom Rock, capacidades da Lana, esclarecimentos do cliente, glossário de códigos, guia de estratégias de campanha e exemplos de mensagens, que servem só para o corte e não entram no prompt) é fatiado estruturalmente por seções (`## <item> — <título>`) e indexado na collection `lana_conhecimento` caso o hash SHA-256 do corpus tenha mudado.
+2. **Consulta e Guardrail (cada turno):** Antes de invocar a LLM, a mensagem atual (contextualizada com as últimas interações) é consultada na base vetorial:
+   - Se a menor distância de cosseno for superior ao limiar (`RAG_LIMIAR_DISTANCIA`, padrão 0.50), o guardrail corta a requisição imediatamente e devolve a resposta padrão `"Posso ajudar com campanhas e comissionamento. Esse assunto está fora do que eu cubro."` sem gastar tokens da LLM.
+   - Se estiver dentro do escopo, os trechos recuperados são injetados no prompt com a diretriz de grounding documental (respostas apenas com base nos trechos citando o item), e os metadados (assunto, item, distância e limiar) são registrados no campo `grounding` da trilha de auditoria.
+   - Em caso de indisponibilidade da base vetorial, a Lana opera em falha aberta, prosseguindo sem RAG e registrando log estruturado em JSON de uma linha.
 
 ---
 

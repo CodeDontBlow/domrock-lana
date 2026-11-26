@@ -1,3 +1,4 @@
+from typing import Any
 from pydantic import BaseModel, Field
 
 from app.core.trilha import PassoTrilha
@@ -50,6 +51,22 @@ class AtingimentoMeta(BaseModel):
     diferenca: float
 
 
+class SimulacaoNaMeta(BaseModel):
+    """Custo da campanha se a venda do período chegar à meta (A6-93).
+
+    As vendas do período, nas marcas da campanha, são multiplicadas por `fator` (meta ÷ venda do
+    período) e a comissão é apurada de novo pelo código determinístico. O custo NÃO é o custo real
+    × fator: a apuração não é linear (gerente sobre a venda da loja, arredondamento por pessoa, piso do A6-77).
+    """
+
+    fator: float                    # meta ÷ venda do período, 4 casas
+    vendas_na_meta: float           # soma das vendas escaladas do período (≈ meta), 2 casas
+    comissao_sem_campanha: float    # comissão atual (com as aprovadas) sobre as vendas escaladas
+    comissao_com_campanha: float    # comissão com esta campanha sobre as vendas escaladas
+    custo_adicional: float          # com − sem
+    cabe_no_orcamento: bool | None  # None quando a ficha não tem orçamento
+
+
 class RetornoCampanha(BaseModel):
     """Retorno da campanha pela conta provisória do A6-72 (ADR-004), até a Dom Rock definir "retorno".
 
@@ -88,6 +105,19 @@ class CenarioAlternativo(BaseModel):
     custo_incremental: float
     economia: float
     cabe_no_orcamento: bool | None
+
+
+class ReferenciaSimulacao(BaseModel):
+    """Campanha futura calculada sobre um mês histórico (ADR-006); None no período histórico.
+
+    `competencias_lidas`: as competências da base usadas, deslocadas para o período da campanha.
+    `descricao`: o texto da trilha. Ex.: "Calculado sobre nov/2025 (referência), crescimento de 10%."
+    """
+
+    competencia_referencia: str
+    pct_crescimento: float
+    competencias_lidas: list[str]
+    descricao: str
 
 
 class TrilhaSimulacao(BaseModel):
@@ -152,3 +182,6 @@ class ResultadoSimulacao(BaseModel):
     apuracao_por_pessoa: list[ApuracaoPessoa] = Field(default_factory=list)
     regras_base_aplicadas: list[RegraBaseAplicada] = Field(default_factory=list)
     pessoas_no_piso: int = 0
+    referencia: ReferenciaSimulacao | None = None
+    na_meta: SimulacaoNaMeta | None = None
+    alertas: list[dict[str, Any]] = Field(default_factory=list)

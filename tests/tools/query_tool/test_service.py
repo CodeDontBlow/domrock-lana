@@ -66,16 +66,20 @@ def test_executar_retorna_recusado_quando_llm_nao_acha_dados(mock_gerar_sql):
 @patch("app.tools.query_tool.service.gerar_sql")
 @patch("app.tools.query_tool.service.validar")
 def test_executar_retorna_bloqueado_quando_guard_rejeita(mock_validar, mock_gerar_sql):
-    """Garante que uma tentativa de injeção seja barrada com status 'bloqueado'."""
+    """Garante que uma tentativa de injeção seja barrada com status 'bloqueado' e guardada no retorno."""
+    from app.tools.query_tool.guard import SqlInseguro
+
     body = QueryRequestBody(pergunta="Delete tudo")
     
     mock_gerar_sql.return_value = ("DELETE FROM venda", None)
-    
-    # Simula o guard levantando a exceção de segurança
-    from app.tools.query_tool.guard import SqlInseguro
     mock_validar.side_effect = SqlInseguro("Comando de escrita encontrado")
 
     resultado = executar(body)
     
     assert resultado.status == "bloqueado"
     assert "Comando de escrita encontrado" in resultado.erro
+    assert resultado.motivo == "Comando de escrita encontrado"
+    assert resultado.horario is not None
+    assert resultado.evento["status"] == "bloqueada"
+    assert resultado.evento["sql"] == "DELETE FROM venda"
+    assert resultado.evento["motivo"] == "Comando de escrita encontrado"

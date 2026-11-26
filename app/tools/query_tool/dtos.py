@@ -15,3 +15,5 @@ class QueryResponseBody(ToolResultBase):
     dados: list[dict[str, Any]] | None = None
     motivo: str | None = None  
     erro: str | None = None  
+    horario: str | None = None
+    evento: dict[str, Any] | None = None

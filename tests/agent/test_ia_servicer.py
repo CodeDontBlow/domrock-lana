@@ -134,6 +134,17 @@ def test_turno_sem_ferramenta_devolve_trilha_json_vazio() -> None:
     assert montar_resposta({"response": "Posso simular campanhas.", "events": [], "regra": None}).trilha_json == ""
 
 
+def test_alertas_do_turno_vai_em_alertas_json() -> None:
+    alertas = [{"tipo": "consulta_bloqueada", "motivo": "Comando de escrita encontrado", "status": "bloqueada"}]
+    resposta = montar_resposta({"response": "ok", "events": [], "regra": None, "alertas": alertas})
+    assert json.loads(resposta.alertas_json) == alertas
+
+
+def test_turno_sem_alertas_devolve_alertas_json_vazio() -> None:
+    assert montar_resposta({"response": "ok", "events": [], "regra": None}).alertas_json == ""
+    assert montar_resposta({"response": "ok", "events": [], "regra": None, "alertas": []}).alertas_json == ""
+
+
 class AgenteComErro:
     """Faz as vezes do lana_invoke quando o provedor falha (ex.: Gemini 504 ao passar do AI_TIMEOUT_S)."""
 

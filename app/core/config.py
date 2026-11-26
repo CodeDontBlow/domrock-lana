@@ -21,10 +21,18 @@ class Settings(BaseSettings):
     AI_FALLBACKS: str = ""
     # Tempo máximo por modelo; um provedor lento (ex.: OpenRouter gratuito) passa a vez ao próximo.
     AI_TIMEOUT_S: float = 30
+    # Limite de passos do grafo (A6-128, Lab 10 Desafio 1: guardrail de agente contra loops infinitos).
+    LANA_LIMITE_PASSOS: int = 25
     PORT: int = 8000
     DATABASE_URL: str = ""
     # "llm" gera o código da regra com a IA (A6-37); "modelo" usa o código fixo (plano B da demo).
     CODEGEN_MODO: str = "llm"
+    # RAG e Guardrails (A6-128)
+    RAG_ATIVO: bool = True
+    RAG_LIMIAR_DISTANCIA: float = 0.50
+    RAG_TOP_K: int = 3
+    RAG_PASTA_CHROMA: str = "data/chroma"
+    RAG_PASTA_MODELO: str = "data/modelos"
     # BACKEND_URL: str = ""
 
     model_config = SettingsConfigDict(

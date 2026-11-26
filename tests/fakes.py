@@ -5,6 +5,7 @@ import pandas as pd
 
 from app.simulacao.bases import BasesSimulacao
 from app.simulacao.vigencia import CampanhaContexto
+from app.tools.code_tool.codigo import CodigoInseguroError
 from app.tools.code_tool.dtos import CodigoGerado, ContextoGeracao
 from app.tools.code_tool.gerador import GeradorCodigoModelo
 from app.tools.regra_tool.dtos import ParametrosSimulacao
@@ -133,3 +134,32 @@ class FakeSimuladorCusto:
 def fonte_modelo(parametros: ParametrosSimulacao) -> str:
     contexto = ContextoGeracao(parametros, ["2025-11"], {})
     return GeradorCodigoModelo().gerar(contexto, None).fonte
+
+
+class FakeGeradorCodigoInseguro:
+    """Fake de gerador que levanta CodigoInseguroError na 1ª chamada e devolve código válido nas seguintes."""
+
+    def __init__(self, fonte_valida: str, linha: int = 2, descricao: str = "Import proibido: 'os'") -> None:
+        self._fonte_valida = fonte_valida
+        self.linha = linha
+        self.descricao = descricao
+        self.chamadas = 0
+
+    def gerar(self, contexto: ContextoGeracao, erro_anterior: str | None) -> CodigoGerado:
+        self.chamadas += 1
+        if self.chamadas == 1:
+            raise CodigoInseguroError(self.descricao, linha=self.linha, descricao=self.descricao)
+        return CodigoGerado(fonte=self._fonte_valida, origem="fake")
+
+
+class FakeGeradorSempreInseguro:
+    """Gerador que só devolve código inseguro (sempre levanta CodigoInseguroError)."""
+
+    def __init__(self, linha: int = 2, descricao: str = "Import proibido: 'os'") -> None:
+        self.linha = linha
+        self.descricao = descricao
+        self.chamadas = 0
+
+    def gerar(self, contexto: ContextoGeracao, erro_anterior: str | None) -> CodigoGerado:
+        self.chamadas += 1
+        raise CodigoInseguroError(self.descricao, linha=self.linha, descricao=self.descricao)

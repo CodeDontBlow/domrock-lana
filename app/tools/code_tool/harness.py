@@ -14,7 +14,12 @@ Camadas (a validação AST em `codigo.py` é a primeira):
 import builtins
 import json
 import os
-import resource
+# `resource` só existe em Unix (A6-118, PR #10): no Windows o harness roda sem os limites de
+# memória, CPU e disco, sobra só o timeout do runner, e o `SubprocessRunner` avisa no log.
+try:
+    import resource
+except ImportError:
+    resource = None
 import sys
 import traceback
 from io import StringIO
@@ -38,6 +43,8 @@ class RetornoInvalidoError(TypeError):
 
 
 def limitar_recursos(timeout_s: int) -> None:
+    if resource is None:
+        return
     resource.setrlimit(resource.RLIMIT_AS, (LIMITE_MEMORIA_BYTES, LIMITE_MEMORIA_BYTES))
     # Rede de segurança acima do timeout de relógio do runner, para o timeout ser reportado como tal.
     limite_cpu = timeout_s + MARGEM_CPU_S
