@@ -11,6 +11,7 @@ from langgraph.errors import GraphRecursionError
 from app.agent.fonte_dos_valores import conferir_fonte_dos_valores
 from app.agent.graph import lana
 from app.agent.prompts import SYSTEM_RULES
+from app.agent.competencia_dita import PERGUNTA_COMPETENCIA, exigir_competencia_dita, textos_do_usuario
 from app.agent.trilha import montar_trilha_chat, montar_trilha_fora_do_escopo
 from app.core.config import extract_text, get_settings
 from app.rag.base_vetorial import BaseConhecimento, TrechoEncontrado, obter_base_conhecimento
@@ -369,14 +370,18 @@ def _montar_resultado_turno(
     historico_mensagens: list[BaseMessage],
     historico: list[dict[str, Any]] | None,
     grounding: ResultadoGrounding | None = None,
+    rascunho: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     regra_do_turno = extrair_regra(messages)
-    solicitacao_do_turno = extrair_solicitacao(messages)
+    extraida = extrair_solicitacao(messages)
+    solicitacao_do_turno = exigir_competencia_dita(extraida, rascunho, textos_do_usuario(user_input, historico))
     dados_g = grounding.model_dump(mode="json") if grounding else None
     trilha = montar_trilha_chat(messages, get_settings().AI_MODEL, grounding=dados_g)
     resposta = _conferir_resposta_do_turno(
         messages[-1], user_input, regra, regra_do_turno, trilha, historico_mensagens, historico
     )
+    if extraida and solicitacao_do_turno is None:
+        resposta = PERGUNTA_COMPETENCIA
     return {
         "chat_id": thread_id,
         "response": resposta,
@@ -408,5 +413,5 @@ def _invocar_turno(
     )
     messages = _executar_grafo(entrada)
     return _montar_resultado_turno(
-        thread_id, messages, user_input, regra, hist_msgs, historico, grounding
+        thread_id, messages, user_input, regra, hist_msgs, historico, grounding, rascunho=solicitacao
     )

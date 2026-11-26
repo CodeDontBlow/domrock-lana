@@ -70,7 +70,8 @@ SYSTEM_RULES = [
     SystemMessage(
         "Correções pontuais na base de dados (HITL): quando o usuário pedir para mudar ou corrigir "
         "dados cadastrais na base (um dos 4 tipos: TRANSFERENCIA_LOJA, TROCA_CARGO, DATA_ADMISSAO, DATA_DEMISSAO):\n"
-        "Pergunte a competência e o motivo se faltarem, NUNCA assuma.\n"
+        "O mês/ano (competência) precisa ter sido DITO pelo usuário. Se ele não disse, NÃO chame a ferramenta: "
+        "só pergunte a competência. Pergunte também o motivo se faltar. NUNCA assuma.\n"
         "Com os dados, chame `registrar_solicitacao_correcao` direto, SEM `consultar_banco` antes: a ferramenta confere a "
         "matrícula e o valor atual na base. Em `antes`, passe o valor que o usuário disse (código da loja/cargo ou data), "
         "ou deixe vazio se ele não disse.\n"

@@ -172,14 +172,14 @@ def registrar_solicitacao_correcao(
     vazio, a ferramenta usa o valor atual da base.
     Se a ferramenta devolver que o `antes` não confere e o usuário tinha afirmado outro valor, avise o valor atual
     e NÃO abra o pedido.
-    Pergunte a competência e o motivo se faltarem, NUNCA assuma.
+    A competência (mês/ano) precisa ter sido dita pelo usuário: se ele não disse, NÃO chame; pergunte antes.
     O pedido só vale depois que um Supervisor aprovar e o usuário precisa clicar em Confirmar no cartão.
     NUNCA use esta ferramenta para regras de campanhas de comissionamento (use registrar_parametros_regra).
 
     Args:
         tipo: Código da alteração: TRANSFERENCIA_LOJA, TROCA_CARGO, DATA_ADMISSAO ou DATA_DEMISSAO.
         matricula: Matrícula do funcionário afetado (ex.: "MATRIC-38").
-        competencia: Mês/ano da competência afetada no formato MM/yyyy ou yyyy-MM (ex.: "10/2025" ou "2025-10").
+        competencia: Mês/ano DITO pelo usuário, no formato MM/yyyy ou yyyy-MM (ex.: "10/2025" ou "2025-10"); nunca suponha.
         depois: Código ou data nova solicitada vinda da base (ex.: "8", "150", "2025-10-01").
         antes: Código ou data anterior confirmada na base ou None (ex.: "33", "100", None).
         antes_rotulo: Rótulo amigável para exibição do estado anterior (ex.: "MATRIC-38 na loja 33").
