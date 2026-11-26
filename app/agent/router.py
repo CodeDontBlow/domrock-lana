@@ -28,6 +28,8 @@ class AgentRequest(BaseModel):
     regra: dict[str, Any] | None = None
     # Histórico de mensagens recebido do backend (A6-65).
     historico: list[dict[str, Any]] | None = None
+    # Solicitação como está no chat/painel HITL (com as edições do usuário), para o agente partir dela.
+    solicitacao: dict[str, Any] | None = None
 
 
 class AgentResponse(BaseModel):
@@ -36,6 +38,8 @@ class AgentResponse(BaseModel):
     events: list[AgentEvents] = []
     # Regra registrada neste turno (contrato de estrutura_parametros_regra), para o painel de revisão.
     regra: dict[str, Any] | None = None
+    # Solicitação de alteração/correção na base de dados (A6-81)
+    solicitacao: dict[str, Any] | None = None
     # De onde veio cada número (contrato 2.2), montada pelo código; None quando não usou ferramenta.
     trilha: dict[str, Any] | None = None
     # A6-95: alertas técnicos que travam aprovação (consultas bloqueadas e achados de código)
@@ -52,7 +56,7 @@ MENSAGEM_COTA = (
 @router.post("/invoke", response_model=AgentResponse)
 def invoke(body: AgentRequest) -> AgentResponse | JSONResponse:
     try:
-        return lana_invoke(body.chat_id, body.message, body.regra, body.historico)
+        return lana_invoke(body.chat_id, body.message, body.regra, body.historico, body.solicitacao)
     except Exception as erro:
         # Cota da LLM (429) vira 503 com mensagem para o usuário, não um 500 sem explicação.
         if limite_de_cota(erro):

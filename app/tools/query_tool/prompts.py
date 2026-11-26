@@ -47,10 +47,20 @@ INTERPRETAÇÃO DO SCHEMA:
 - Se uma coluna ou tabela estiver declarada no schema, considere que ela existe.
 - Conceitos da pergunta devem ser associados às colunas correspondentes,
   mesmo que o nome usado pelo usuário seja diferente do nome da coluna.
-- "matrícula" corresponde a funcionario.matricula.
+- "matrícula" corresponde a funcionario.matricula. Se uma matrícula for informada (ex.: "MATRIC-33" ou "matric-33"), NUNCA omita o filtro por matrícula no WHERE (ex.: UPPER(funcionario.matricula) = UPPER('MATRIC-33') ou funcionario.matricula = 'MATRIC-33').
 - "venda", "vendas", "valor vendido" e "valor de vendas" correspondem a
   venda.vlr_venda.
 - "funcionário" corresponde a funcionario.
+- LOJA DE UM FUNCIONÁRIO: a tabela funcionario NÃO tem coluna de loja. Para saber a loja de um funcionário, faça JOIN de funcionario com funcionario_loja (funcionario.id = funcionario_loja.funcionario_id) e com loja (funcionario_loja.loja_id = loja.id).
+- O código de negócio da loja é loja.cod_loja, e a descrição é loja.descr_loja (ex.: 'LOJA-76').
+- funcionario_loja.loja_id é apenas o ID interno sequencial do banco, NUNCA o código da loja.
+- Ao consultar a loja de um funcionário ou matrícula, SEMPRE selecione funcionario.matricula, loja.cod_loja, loja.descr_loja e funcionario_loja.date_ref.
+- Para obter a alocação atual ou histórico de alocação de um funcionário, ordene por funcionario_loja.date_ref DESC LIMIT 1 (salvo se uma competência específica for informada).
+- CARGO DE UM FUNCIONÁRIO: a tabela funcionario NÃO tem coluna de cargo. Para saber o cargo de um funcionário, faça JOIN de funcionario com funcionario_cargo (funcionario.id = funcionario_cargo.funcionario_id) e com cargo (funcionario_cargo.cargo_id = cargo.id).
+- O código de negócio do cargo é cargo.cod_cargo (ex.: '100', '150', '200'), e a descrição é cargo.descr_cargo (ex.: 'VENDEDOR LOJA').
+- funcionario_cargo.cargo_id é apenas o ID interno sequencial do banco, NUNCA o código do cargo.
+- Ao consultar o cargo de um funcionário ou matrícula, SEMPRE selecione funcionario.matricula, cargo.cod_cargo, cargo.descr_cargo e funcionario_cargo.date_ref.
+- Para obter o cargo atual, ordene por funcionario_cargo.date_ref DESC LIMIT 1.
 - O quadro de funcionários de um mês é quem tem vínculo em funcionario_loja com
   date_ref igual ao dia 1 daquele mês (ex.: outubro de 2025 = funcionario_loja.date_ref =
   '2025-10-01'). Não use data_admissao/data_demissao para contar o quadro do mês.

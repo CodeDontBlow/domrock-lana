@@ -11,6 +11,7 @@ from langgraph.errors import GraphRecursionError
 from app.agent.fonte_dos_valores import conferir_fonte_dos_valores
 from app.agent.graph import lana
 from app.agent.prompts import SYSTEM_RULES
+from app.agent.competencia_dita import PERGUNTA_COMPETENCIA, exigir_competencia_dita, textos_do_usuario
 from app.agent.trilha import montar_trilha_chat, montar_trilha_fora_do_escopo
 from app.core.config import extract_text, get_settings
 from app.rag.base_vetorial import BaseConhecimento, TrechoEncontrado, obter_base_conhecimento
@@ -23,6 +24,8 @@ from app.rag.grounding import (
     contexto_documental,
     texto_de_busca,
 )
+from app.tools.correcao_tool.tool import NOME_TOOL_CORRECAO
+from app.tools.intercorrencia_tool.tool import NOME_TOOL_INTERCORRENCIA
 from app.tools.regra_tool.tool import NOME_TOOL_REGRA
 
 logger = logging.getLogger(__name__)
@@ -140,6 +143,18 @@ def extrair_regra(messages: list[BaseMessage]) -> dict[str, Any] | None:
     return None
 
 
+def extrair_solicitacao(messages: list[BaseMessage]) -> dict[str, Any] | None:
+    """Última solicitação de alteração/intercorrência registrada no turno (artifact da tool), ou None."""
+    for m in reversed(messages):
+        if (
+            isinstance(m, ToolMessage)
+            and m.name in (NOME_TOOL_CORRECAO, NOME_TOOL_INTERCORRENCIA)
+            and m.artifact
+        ):
+            return m.artifact
+    return None
+
+
 def contexto_do_painel(regra: dict[str, Any] | None) -> str:
     """Valores atuais do painel, que o usuário pode ter editado sem o agente saber.
 
@@ -151,6 +166,29 @@ def contexto_do_painel(regra: dict[str, Any] | None) -> str:
     return (
         "[Parâmetros atuais no painel, já revisados pelo usuário. Parta deles ao registrar a "
         f"regra e mude só o que ele pedir: {json.dumps(valores, ensure_ascii=False)}]\n\n"
+    )
+
+
+def contexto_da_solicitacao(solicitacao: dict[str, Any] | None) -> str:
+    """Valores atuais da solicitação de alteração/intercorrência no chat/painel HITL.
+
+    Permite que o usuário peça alterações em linguagem natural e o agente atualize a solicitação existente.
+    """
+    if not solicitacao:
+        return ""
+    campos = {
+        "categoria": solicitacao.get("categoria"),
+        "tipo": solicitacao.get("tipo"),
+        "matricula": solicitacao.get("matricula"),
+        "competencia": solicitacao.get("competencia"),
+        "antes": solicitacao.get("antes"),
+        "depois": solicitacao.get("depois"),
+        "motivo": solicitacao.get("motivo"),
+    }
+    return (
+        "[Solicitação atual no chat/painel (HITL), ainda NÃO enviada aos supervisores. "
+        "Parta destes valores ao chamar a ferramenta de solicitação correspondente e altere apenas o que o usuário pedir: "
+        f"{json.dumps(campos, ensure_ascii=False)}]\n\n"
     )
 
 
@@ -176,9 +214,14 @@ def _mensagens_de_entrada(
     user_input: str,
     regra: dict[str, Any] | None,
     historico_mensagens: list[BaseMessage],
+    solicitacao: dict[str, Any] | None = None,
     achados: list[TrechoEncontrado] | None = None,
 ) -> list[BaseMessage]:
-    conteudo_contexto = contexto_do_painel(regra) + contexto_documental(achados or [])
+    conteudo_contexto = (
+        contexto_do_painel(regra)
+        + contexto_da_solicitacao(solicitacao)
+        + contexto_documental(achados or [])
+    )
     mensagem_atual = HumanMessage(content=conteudo_contexto + user_input)
     return [*SYSTEM_RULES, *historico_mensagens, mensagem_atual]
 
@@ -210,6 +253,7 @@ def lana_invoke(
     user_input: str,
     regra: dict[str, Any] | None = None,
     historico: list[dict[str, Any]] | None = None,
+    solicitacao: dict[str, Any] | None = None,
     base: BaseConhecimento | None = None,
     config_rag: ConfigRag | None = None,
 ) -> dict[str, Any]:
@@ -217,7 +261,13 @@ def lana_invoke(
         config = config_rag or ConfigRag.do_settings()
         base_ativa = base or (_obter_base_ou_nada() if config.ativo else None)
         return _invocar_turno(
-            thread_id, user_input, regra, historico, base=base_ativa, config=config
+            thread_id,
+            user_input,
+            regra,
+            historico,
+            solicitacao=solicitacao,
+            base=base_ativa,
+            config=config,
         )
 
 
@@ -306,6 +356,7 @@ def _resposta_fora_do_escopo(
         "response": MENSAGEM_FORA_DO_ESCOPO,
         "events": [],
         "regra": None,
+        "solicitacao": None,
         "trilha": trilha,
         "alertas": [],
     }
@@ -319,16 +370,26 @@ def _montar_resultado_turno(
     historico_mensagens: list[BaseMessage],
     historico: list[dict[str, Any]] | None,
     grounding: ResultadoGrounding | None = None,
+    rascunho: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     regra_do_turno = extrair_regra(messages)
+    extraida = extrair_solicitacao(messages)
+    solicitacao_do_turno = exigir_competencia_dita(extraida, rascunho, textos_do_usuario(user_input, historico))
     dados_g = grounding.model_dump(mode="json") if grounding else None
     trilha = montar_trilha_chat(messages, get_settings().AI_MODEL, grounding=dados_g)
     resposta = _conferir_resposta_do_turno(
         messages[-1], user_input, regra, regra_do_turno, trilha, historico_mensagens, historico
     )
+    if extraida and solicitacao_do_turno is None:
+        resposta = PERGUNTA_COMPETENCIA
     return {
-        "chat_id": thread_id, "response": resposta, "events": get_events(messages),
-        "regra": regra_do_turno, "trilha": trilha, "alertas": extrair_alertas(trilha),
+        "chat_id": thread_id,
+        "response": resposta,
+        "events": get_events(messages),
+        "regra": regra_do_turno,
+        "solicitacao": solicitacao_do_turno,
+        "trilha": trilha,
+        "alertas": extrair_alertas(trilha),
     }
 
 
@@ -337,6 +398,7 @@ def _invocar_turno(
     user_input: str,
     regra: dict[str, Any] | None,
     historico: list[dict[str, Any]] | None = None,
+    solicitacao: dict[str, Any] | None = None,
     base: BaseConhecimento | None = None,
     config: ConfigRag | None = None,
 ) -> dict[str, Any]:
@@ -346,8 +408,10 @@ def _invocar_turno(
     if grounding.situacao == "fora_do_escopo":
         return _resposta_fora_do_escopo(thread_id, grounding)
 
-    entrada = _mensagens_de_entrada(user_input, regra, hist_msgs, achados)
+    entrada = _mensagens_de_entrada(
+        user_input, regra, hist_msgs, solicitacao=solicitacao, achados=achados
+    )
     messages = _executar_grafo(entrada)
     return _montar_resultado_turno(
-        thread_id, messages, user_input, regra, hist_msgs, historico, grounding
+        thread_id, messages, user_input, regra, hist_msgs, historico, grounding, rascunho=solicitacao
     )

@@ -18,8 +18,8 @@ def get_connection():
         conn.close()
 
 
-def executar_select(sql: str) -> list[dict]:
+def executar_select(sql: str, parametros: dict | None = None) -> list[dict]:
     with get_connection() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
-            cursor.execute(sql)
+            cursor.execute(sql, parametros)
             return [dict(row) for row in cursor.fetchall()]

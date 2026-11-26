@@ -130,3 +130,29 @@ def test_quando_obter_base_levanta_segue_sem_rag(monkeypatch):
     g = turno["trilha"]["grounding"]
     assert g["situacao"] == "indisponivel"
 
+
+def test_pedido_de_correcao_nao_e_bloqueado(monkeypatch):
+    grafo = FakeGrafoRegistrador()
+    monkeypatch.setattr(service, "_executar_grafo", grafo)
+    turno = lana_invoke(
+        "c1",
+        "a MATRIC-38 foi transferida da loja 33 para a 8 em outubro",
+        base=FakeBaseConhecimento([encontrado("ex-29", 0.15)]),
+        config_rag=CONFIG_050,
+    )
+    assert len(grafo.chamadas) == 1
+    assert turno["trilha"]["grounding"]["situacao"] == "no_escopo"
+
+
+def test_pedido_de_intercorrencia_nao_e_bloqueado(monkeypatch):
+    grafo = FakeGrafoRegistrador()
+    monkeypatch.setattr(service, "_executar_grafo", grafo)
+    turno = lana_invoke(
+        "c1",
+        "a MATRIC-12 sai de férias de 01/12 a 15/12",
+        base=FakeBaseConhecimento([encontrado("ex-31", 0.15)]),
+        config_rag=CONFIG_050,
+    )
+    assert len(grafo.chamadas) == 1
+    assert turno["trilha"]["grounding"]["situacao"] == "no_escopo"
+

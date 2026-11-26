@@ -15,6 +15,7 @@ message InvokeRequest {
   string chat_id = 2;
   string regra_json = 3;
   string historico_json = 4;  // A6-65: mensagens anteriores da conversa, em JSON
+  string solicitacao_json = 5;  // A6-81: rascunho do cartão do chat ainda não confirmado (Solicitacao), ou ""
 }
 
 message InvokeResponse {
@@ -23,4 +24,5 @@ message InvokeResponse {
   string regra_json = 3;
   string trilha_json = 4;  // A6-70: trilha (contrato 2.2) em JSON, ou ""
   string alertas_json = 5;  // A6-95: alertas técnicos em JSON, ou ""
+  string solicitacao_json = 6;  // A6-81/A6-124: pedido montado pela Lana neste turno (Solicitacao), ou ""
 }

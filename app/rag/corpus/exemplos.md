@@ -86,3 +86,21 @@ Bom dia, Lana!
 
 ## ex-28 — Cumprimento
 Obrigado pela ajuda.
+
+## ex-29 — Pedido de correção cadastral
+a MATRIC-38 foi transferida da loja 33 para a 8 em outubro
+
+## ex-30 — Pedido de correção cadastral
+O funcionário MATRIC-10 mudou de cargo em novembro
+
+## ex-31 — Pedido de intercorrência
+a MATRIC-12 sai de férias de 01/12 a 15/12
+
+## ex-32 — Pedido de intercorrência
+Registrar afastamento da MATRIC-05 em outubro
+
+## ex-33 — Pedido de intercorrência
+A funcionária MATRIC-20 entrou em licença-maternidade em 10/10 a 10/02
+
+## ex-34 — Pedido de intercorrência
+Cobertura de loja da MATRIC-15 na loja 8 de 01/11 a 15/11
