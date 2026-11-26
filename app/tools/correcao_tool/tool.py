@@ -5,6 +5,11 @@ from typing import Any
 
 from langchain_core.tools import tool
 
+from app.tools.correcao_tool.conferencia import (
+    BuscarValoresAtuais,
+    buscar_valores_atuais,
+    conferir_antes_na_base,
+)
 from app.tools.correcao_tool.dtos import (
     TIPOS_CORRECAO,
     SolicitacaoCorrecao,
@@ -13,6 +18,9 @@ from app.tools.correcao_tool.dtos import (
 from app.tools.dtos import calcular_tempo_ms
 
 NOME_TOOL_CORRECAO = "registrar_solicitacao_correcao"
+
+# A @tool não aceita dependência injetada (o LLM veria o parâmetro); os testes trocam esta busca por um fake.
+buscar_valores_na_base: BuscarValoresAtuais = buscar_valores_atuais
 
 
 def normalizar_competencia(competencia: str) -> str:
@@ -192,6 +200,9 @@ def registrar_solicitacao_correcao(
     rotulo = TIPOS_CORRECAO[tipo_l]
     val_ant = (antes.strip() if isinstance(antes, str) else str(antes)) if antes is not None else None
     val_dep = depois.strip() if isinstance(depois, str) else str(depois)
+    erro_antes = conferir_antes_na_base(tipo_l, mat_l, comp_norm, val_ant, buscar=buscar_valores_na_base)
+    if erro_antes:
+        return montar_retorno_erro_correcao(erro_antes, inicio)
     rot_ant, rot_dep = resolver_rotulos_correcao(tipo_l, rotulo, mat_l, val_ant, val_dep, antes_rotulo, depois_rotulo)
     motivo_final = normalizar_motivo_correcao(motivo, rotulo, mat_l)
     solic = criar_solicitacao_correcao(tipo_l, rotulo, mat_l, comp_norm, val_ant, val_dep, rot_ant, rot_dep, motivo_final)
