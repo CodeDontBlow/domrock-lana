@@ -6,6 +6,7 @@ import threading
 from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langgraph.errors import GraphRecursionError
 
 from app.agent.fonte_dos_valores import conferir_fonte_dos_valores
 from app.agent.graph import lana
@@ -220,10 +221,22 @@ def lana_invoke(
         )
 
 
+# A6-128: mensagem amigável quando o limite de recursão do LangGraph é atingido.
+MENSAGEM_LIMITE_DE_PASSOS: str = (
+    "Não consegui concluir dentro do limite de passos. Tente dividir o pedido em partes menores."
+)
+
+
 def _executar_grafo(entrada: list[BaseMessage]) -> list[BaseMessage]:
-    result = lana.invoke({"messages": entrada})
-    novas = result["messages"][len(entrada):]
-    return novas if novas else [result["messages"][-1]]
+    limite = get_settings().LANA_LIMITE_PASSOS
+    try:
+        result = lana.invoke({"messages": entrada}, {"recursion_limit": limite})
+        novas = result["messages"][len(entrada):]
+        return novas if novas else [result["messages"][-1]]
+    except GraphRecursionError:
+        # A6-128: observabilidade do guardrail de agente atingindo o limite de passos.
+        logger.warning(json.dumps({"evento": "limite_de_passos", "limite": limite}, ensure_ascii=False))
+        return [AIMessage(content=MENSAGEM_LIMITE_DE_PASSOS)]
 
 
 def _conferir_resposta_do_turno(
