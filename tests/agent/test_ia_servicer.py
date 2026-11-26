@@ -9,7 +9,13 @@ from typing import Any
 
 import pytest
 
-from app.agent.ia_servicer import IAServiceServicer, ler_historico, ler_regra, montar_resposta
+from app.agent.ia_servicer import (
+    IAServiceServicer,
+    ler_historico,
+    ler_regra,
+    ler_solicitacao,
+    montar_resposta,
+)
 from app.agent.router import tempo_esgotado
 from app.proto import ia_service_pb2
 
@@ -24,7 +30,14 @@ class AgenteFalso:
         self.turno = turno
         self.pedidos: list[tuple[str, str, dict[str, Any] | None]] = []
 
-    def __call__(self, chat_id: str, mensagem: str, regra: dict[str, Any] | None) -> dict[str, Any]:
+    def __call__(
+        self,
+        chat_id: str,
+        mensagem: str,
+        regra: dict[str, Any] | None,
+        historico: list[dict[str, Any]] | None = None,
+        solicitacao: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         self.pedidos.append((chat_id, mensagem, regra))
         return self.turno
 
@@ -65,8 +78,8 @@ def test_repassa_ao_agente_o_historico_recebido() -> None:
     ]
     pedidos = []
 
-    def mock_invocar(chat_id, mensagem, regra, hist):
-        pedidos.append((chat_id, mensagem, regra, hist))
+    def mock_invocar(chat_id, mensagem, regra, hist, solicitacao=None):
+        pedidos.append((chat_id, mensagem, regra, hist, solicitacao))
         return {"chat_id": chat_id, "response": "entendido", "events": [], "regra": None}
 
     asyncio.run(IAServiceServicer(mock_invocar).InvokeAgent(
@@ -78,7 +91,35 @@ def test_repassa_ao_agente_o_historico_recebido() -> None:
         ContextoFalso(),
     ))
 
-    assert pedidos == [("c1", "vamos continuar", None, historico)]
+    assert pedidos == [("c1", "vamos continuar", None, historico, None)]
+
+
+def test_repassa_ao_agente_a_solicitacao_recebida() -> None:
+    solicitacao = {
+        "categoria": "CORRECAO",
+        "tipo": "TRANSFERENCIA_LOJA",
+        "matricula": "MATRIC-38",
+        "competencia": "2025-10",
+        "antes": "33",
+        "depois": "8",
+        "motivo": "Ajuste de loja",
+    }
+    pedidos = []
+
+    def mock_invocar(chat_id, mensagem, regra, hist, solicitacao=None):
+        pedidos.append((chat_id, mensagem, regra, hist, solicitacao))
+        return {"chat_id": chat_id, "response": "atualizado", "events": [], "regra": None}
+
+    asyncio.run(IAServiceServicer(mock_invocar).InvokeAgent(
+        ia_service_pb2.InvokeRequest(
+            prompt="mude para a loja 8",
+            chat_id="c1",
+            solicitacao_json=json.dumps(solicitacao),
+        ),
+        ContextoFalso(),
+    ))
+
+    assert pedidos == [("c1", "mude para a loja 8", None, [], solicitacao)]
 
 
 def test_ler_historico_vazio_devolve_lista_vazia() -> None:
@@ -122,6 +163,40 @@ def test_ficha_invalida_mostra_o_que_chegou() -> None:
         ler_regra("{quebrado")
 
 
+def test_ler_solicitacao_vazio_devolve_none() -> None:
+    assert ler_solicitacao("") is None
+    assert ler_solicitacao(None) is None
+
+
+def test_ler_solicitacao_invalido_mostra_o_que_chegou() -> None:
+    with pytest.raises(ValueError, match=r"solicitacao_json inválido.*\{invalido"):
+        ler_solicitacao("{invalido")
+
+
+def test_ler_solicitacao_nao_dict_lanca_excecao() -> None:
+    with pytest.raises(ValueError, match=r"solicitacao_json inválido.*esperado objeto JSON"):
+        ler_solicitacao('["array"]')
+
+
+def test_solicitacao_do_turno_vai_em_solicitacao_json() -> None:
+    solic = {
+        "categoria": "CORRECAO",
+        "tipo": "TRANSFERENCIA_LOJA",
+        "matricula": "MATRIC-38",
+        "competencia": "2025-10",
+        "antes": "33",
+        "depois": "8",
+        "motivo": "Transferida",
+    }
+    resposta = montar_resposta({"response": "ok", "events": [], "regra": None, "solicitacao": solic})
+    assert json.loads(resposta.solicitacao_json) == solic
+
+
+def test_turno_sem_solicitacao_devolve_solicitacao_json_vazio() -> None:
+    assert montar_resposta({"response": "ok", "events": [], "regra": None}).solicitacao_json == ""
+    assert montar_resposta({"response": "ok", "events": [], "regra": None, "solicitacao": None}).solicitacao_json == ""
+
+
 def test_trilha_do_turno_vai_em_trilha_json() -> None:
     trilha = {"modelo": "m", "tentativas": None, "premissas": [], "passos": [{"ordem": 1, "ferramenta": "consultar_banco"}]}
 
@@ -151,7 +226,14 @@ class AgenteComErro:
     def __init__(self, erro: Exception) -> None:
         self.erro = erro
 
-    def __call__(self, chat_id: str, mensagem: str, regra: dict[str, Any] | None) -> dict[str, Any]:
+    def __call__(
+        self,
+        chat_id: str,
+        mensagem: str,
+        regra: dict[str, Any] | None,
+        historico: list[dict[str, Any]] | None = None,
+        solicitacao: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         raise self.erro
 
 

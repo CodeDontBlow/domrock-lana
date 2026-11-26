@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from app.core.trilha import PassoTrilha, competencias_por_extenso
 from app.tools.correcao_tool.tool import NOME_TOOL_CORRECAO
+from app.tools.intercorrencia_tool.tool import NOME_TOOL_INTERCORRENCIA
 from app.tools.regra_tool.tool import NOME_TOOL_REGRA
 
 NOME_TOOL_CONSULTA = "consultar_banco"
@@ -75,7 +76,6 @@ def montar_trilha_chat(
     ).model_dump(mode="json")
 
 
-
 def montar_trilha_fora_do_escopo(grounding: dict[str, Any]) -> dict[str, Any]:
     """Trilha simplificada de bloqueio pelo guardrail de escopo antes do grafo (A6-128)."""
     return TrilhaChat(
@@ -107,6 +107,8 @@ def _passo(ordem: int, chamada: ToolCall, retorno: ToolMessage | None) -> PassoT
         return _passo_regra(ordem, resultado)
     if nome == NOME_TOOL_CORRECAO:
         return _passo_correcao(ordem, resultado)
+    if nome == NOME_TOOL_INTERCORRENCIA:
+        return _passo_intercorrencia(ordem, resultado)
     return _passo_generico(ordem, nome, resultado)
 
 
@@ -176,7 +178,7 @@ def _passo_correcao(ordem: int, resultado: dict[str, Any]) -> PassoTrilha:
         "tabelas_acessadas": list(resultado.get("tabelas") or []),
         "competencias": list(resultado.get("competencias") or []),
         "filtros": texto_dos_filtros(resultado.get("filtros")),
-        "sql_executado": resultado.get("sql"),
+        "sql_executado": None,
         "tempo_ms": _inteiro(resultado.get("tempo")),
     }
     if resultado.get("situacao") != "ok":
@@ -187,7 +189,31 @@ def _passo_correcao(ordem: int, resultado: dict[str, Any]) -> PassoTrilha:
             mensagem_erro=str(resultado.get("situacao") or "sem detalhe"),
         )
     solic = resultado.get("solicitacao") or {}
-    tipo = solic.get("tipo") or "correção"
+    tipo = solic.get("tipo_rotulo") or solic.get("tipo") or "correção"
+    matr = solic.get("matricula") or ""
+    descricao = f"Solicitação de {tipo} registrada para {matr}".strip()
+    return PassoTrilha(**comum, descricao=descricao, situacao="SUCESSO")
+
+
+def _passo_intercorrencia(ordem: int, resultado: dict[str, Any]) -> PassoTrilha:
+    comum = {
+        "ordem": ordem,
+        "ferramenta": NOME_TOOL_INTERCORRENCIA,
+        "tabelas_acessadas": list(resultado.get("tabelas") or []),
+        "competencias": list(resultado.get("competencias") or []),
+        "filtros": texto_dos_filtros(resultado.get("filtros")),
+        "sql_executado": None,
+        "tempo_ms": _inteiro(resultado.get("tempo")),
+    }
+    if resultado.get("situacao") != "ok":
+        return PassoTrilha(
+            **comum,
+            descricao="Falha ao registrar intercorrência",
+            situacao="ERRO",
+            mensagem_erro=str(resultado.get("situacao") or "sem detalhe"),
+        )
+    solic = resultado.get("solicitacao") or {}
+    tipo = solic.get("tipo_rotulo") or solic.get("tipo") or "intercorrência"
     matr = solic.get("matricula") or ""
     descricao = f"Solicitação de {tipo} registrada para {matr}".strip()
     return PassoTrilha(**comum, descricao=descricao, situacao="SUCESSO")

@@ -13,7 +13,6 @@ from app.agent.graph import lana
 from app.agent.prompts import SYSTEM_RULES
 from app.agent.trilha import montar_trilha_chat, montar_trilha_fora_do_escopo
 from app.core.config import extract_text, get_settings
-from app.tools.correcao_tool.tool import NOME_TOOL_CORRECAO
 from app.rag.base_vetorial import BaseConhecimento, TrechoEncontrado, obter_base_conhecimento
 from app.rag.grounding import (
     MENSAGEM_FORA_DO_ESCOPO,
@@ -24,6 +23,8 @@ from app.rag.grounding import (
     contexto_documental,
     texto_de_busca,
 )
+from app.tools.correcao_tool.tool import NOME_TOOL_CORRECAO
+from app.tools.intercorrencia_tool.tool import NOME_TOOL_INTERCORRENCIA
 from app.tools.regra_tool.tool import NOME_TOOL_REGRA
 
 logger = logging.getLogger(__name__)
@@ -142,9 +143,13 @@ def extrair_regra(messages: list[BaseMessage]) -> dict[str, Any] | None:
 
 
 def extrair_solicitacao(messages: list[BaseMessage]) -> dict[str, Any] | None:
-    """Última solicitação de alteração/correção registrada no turno (artifact da tool), ou None."""
+    """Última solicitação de alteração/intercorrência registrada no turno (artifact da tool), ou None."""
     for m in reversed(messages):
-        if isinstance(m, ToolMessage) and m.name == NOME_TOOL_CORRECAO and m.artifact:
+        if (
+            isinstance(m, ToolMessage)
+            and m.name in (NOME_TOOL_CORRECAO, NOME_TOOL_INTERCORRENCIA)
+            and m.artifact
+        ):
             return m.artifact
     return None
 
@@ -164,13 +169,14 @@ def contexto_do_painel(regra: dict[str, Any] | None) -> str:
 
 
 def contexto_da_solicitacao(solicitacao: dict[str, Any] | None) -> str:
-    """Valores atuais da solicitação de alteração no chat/painel HITL.
+    """Valores atuais da solicitação de alteração/intercorrência no chat/painel HITL.
 
     Permite que o usuário peça alterações em linguagem natural e o agente atualize a solicitação existente.
     """
     if not solicitacao:
         return ""
     campos = {
+        "categoria": solicitacao.get("categoria"),
         "tipo": solicitacao.get("tipo"),
         "matricula": solicitacao.get("matricula"),
         "competencia": solicitacao.get("competencia"),
@@ -179,8 +185,8 @@ def contexto_da_solicitacao(solicitacao: dict[str, Any] | None) -> str:
         "motivo": solicitacao.get("motivo"),
     }
     return (
-        "[Solicitação de alteração da base atual no chat/painel (HITL), ainda NÃO enviada aos supervisores. "
-        "Parta destes valores ao chamar registrar_solicitacao_correcao novamente e altere apenas o que o usuário pedir: "
+        "[Solicitação atual no chat/painel (HITL), ainda NÃO enviada aos supervisores. "
+        "Parta destes valores ao chamar a ferramenta de solicitação correspondente e altere apenas o que o usuário pedir: "
         f"{json.dumps(campos, ensure_ascii=False)}]\n\n"
     )
 
@@ -210,8 +216,12 @@ def _mensagens_de_entrada(
     solicitacao: dict[str, Any] | None = None,
     achados: list[TrechoEncontrado] | None = None,
 ) -> list[BaseMessage]:
-    prefixo = contexto_do_painel(regra) + contexto_da_solicitacao(solicitacao)
-    mensagem_atual = HumanMessage(content=prefixo + contexto_documental(achados or []) + user_input)
+    conteudo_contexto = (
+        contexto_do_painel(regra)
+        + contexto_da_solicitacao(solicitacao)
+        + contexto_documental(achados or [])
+    )
+    mensagem_atual = HumanMessage(content=conteudo_contexto + user_input)
     return [*SYSTEM_RULES, *historico_mensagens, mensagem_atual]
 
 
@@ -250,7 +260,13 @@ def lana_invoke(
         config = config_rag or ConfigRag.do_settings()
         base_ativa = base or (_obter_base_ou_nada() if config.ativo else None)
         return _invocar_turno(
-            thread_id, user_input, regra, historico, solicitacao, base=base_ativa, config=config
+            thread_id,
+            user_input,
+            regra,
+            historico,
+            solicitacao=solicitacao,
+            base=base_ativa,
+            config=config,
         )
 
 
@@ -339,6 +355,7 @@ def _resposta_fora_do_escopo(
         "response": MENSAGEM_FORA_DO_ESCOPO,
         "events": [],
         "regra": None,
+        "solicitacao": None,
         "trilha": trilha,
         "alertas": [],
     }
@@ -361,8 +378,12 @@ def _montar_resultado_turno(
         messages[-1], user_input, regra, regra_do_turno, trilha, historico_mensagens, historico
     )
     return {
-        "chat_id": thread_id, "response": resposta, "events": get_events(messages),
-        "regra": regra_do_turno, "solicitacao": solicitacao_do_turno, "trilha": trilha,
+        "chat_id": thread_id,
+        "response": resposta,
+        "events": get_events(messages),
+        "regra": regra_do_turno,
+        "solicitacao": solicitacao_do_turno,
+        "trilha": trilha,
         "alertas": extrair_alertas(trilha),
     }
 
@@ -382,7 +403,9 @@ def _invocar_turno(
     if grounding.situacao == "fora_do_escopo":
         return _resposta_fora_do_escopo(thread_id, grounding)
 
-    entrada = _mensagens_de_entrada(user_input, regra, hist_msgs, solicitacao, achados)
+    entrada = _mensagens_de_entrada(
+        user_input, regra, hist_msgs, solicitacao=solicitacao, achados=achados
+    )
     messages = _executar_grafo(entrada)
     return _montar_resultado_turno(
         thread_id, messages, user_input, regra, hist_msgs, historico, grounding

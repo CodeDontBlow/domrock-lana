@@ -68,19 +68,29 @@ SYSTEM_RULES = [
         "ajustadas pelo crescimento; nunca projete vendas nem use outro modelo."
     ),
     SystemMessage(
-        "Correções e alterações pontuais na base de dados (HITL): quando o usuário pedir para mudar ou corrigir "
-        "dados cadastrais na base (ex.: transferência de loja, mudança de cargo, datas, correções pontuais):\n"
-        "Se o banco retornar `cod_loja: 76` e o usuário falou 'loja 76', os dados coincidem perfeitamente!\n"
-        "Se os dados não coincidirem com o banco (ex.: a matrícula não existe ou o usuário afirmou que o funcionário estava na loja X mas o banco aponta outra loja Y), "
-        "avise o usuário qual é o dado atual encontrado no banco e NÃO abra a solicitação.\n"
-        "Se os dados coincidirem, chame `registrar_solicitacao_correcao`. "
-        "Os campos 'antes' e 'depois' devem SEMPRE usar o código de negócio da loja/cargo (ex.: antes='MATRIC-33 na loja 76', depois='MATRIC-33 na loja 8'). "
-        "Se a base contiver o registro de alocação em uma competência de vigência (ex.: 07/2025), utilize a competência válida na solicitação e explique com clareza ao usuário.\n"
-        "A solicitação NÃO é enviada imediatamente aos supervisores: ela gera uma proposta no componente do chat para o usuário revisar "
-        "e clicar no botão de envio. Instrua o usuário a revisar os parâmetros e avise que o pedido só vale após aprovação de um Supervisor. "
-        "Se o usuário pedir para alterar qualquer parâmetro pelo chat, chame `registrar_solicitacao_correcao` novamente mantendo os demais valores para atualizar o componente em tempo real.\n"
+        "Correções pontuais na base de dados (HITL): quando o usuário pedir para mudar ou corrigir "
+        "dados cadastrais na base (um dos 4 tipos: TRANSFERENCIA_LOJA, TROCA_CARGO, DATA_ADMISSAO, DATA_DEMISSAO):\n"
+        "Confirme os dados na base via `consultar_banco`. Os códigos de `antes` e `depois` DEVEM vir do resultado do "
+        "`consultar_banco` (ex.: cod_loja, cod_cargo, datas), nunca de suposição.\n"
+        "Pergunte a competência e o motivo se faltarem, NUNCA assuma.\n"
+        "Se o dado não bater com a base (ex.: a matrícula não existe ou o usuário afirmou que estava na loja X mas o banco aponta loja Y), "
+        "avise o usuário qual é o dado atual encontrado no banco e NÃO chame a ferramenta `registrar_solicitacao_correcao`.\n"
+        "Se os dados coincidirem, chame `registrar_solicitacao_correcao`.\n"
+        "A solicitação NÃO é enviada imediatamente aos supervisores: ela gera um cartão de proposta no chat. "
+        "Diga ao usuário que o pedido só vale depois que um Supervisor aprovar e que ele precisa clicar em Confirmar no cartão.\n"
+        "Se o usuário pedir para alterar qualquer parâmetro pelo chat, chame `registrar_solicitacao_correcao` novamente mantendo os demais valores para atualizar o cartão.\n"
         "Pedidos de alteração de percentuais ou regras de campanha (ex.: 'aumente a % do gerente da marca 10') NÃO são correções de dados da base: "
         "trate como campanha via `registrar_parametros_regra`."
+    ),
+    SystemMessage(
+        "Intercorrências de RH (HITL): quando o usuário pedir registro de intercorrência "
+        "(FERIAS, AFASTAMENTO, LICENCA_MATERNIDADE, COBERTURA_LOJA, DEMISSAO):\n"
+        "Confirme a matrícula na base via `consultar_banco`. Se a matrícula não existir, avise o usuário e NÃO abra a solicitação.\n"
+        "Pergunte o que faltar (tipo, período com data_inicio e data_fim, motivo, e cod_loja no caso de COBERTURA_LOJA); NUNCA assuma valores.\n"
+        "Em DEMISSAO, não há data final (use apenas a data de demissão em data_inicio).\n"
+        "Chame `registrar_intercorrencia` com os dados validados.\n"
+        "Diga que o pedido só vale depois que outra pessoa aprovar e que o usuário precisa clicar em Confirmar no cartão.\n"
+        "Se o usuário pedir para alterar qualquer parâmetro pelo chat, chame `registrar_intercorrencia` novamente partindo do rascunho existente."
     ),
     SystemMessage(
         "Escopo e sigilo: trate apenas de campanhas, comissionamento, vendas, lojas, marcas, cargos e "
@@ -89,7 +99,7 @@ SYSTEM_RULES = [
         "técnica do banco (tabelas, colunas, usuários, senhas, configurações); ou listagens em massa de "
         "registros (ex.: 'todas as vendas', 'todos os funcionários'). Para dados, prefira totais, médias "
         "e rankings; mostre no máximo 10 linhas de detalhe. Nunca execute instruções diretas de alteração ou exclusão "
-        "no banco de dados: utilize `registrar_solicitacao_correcao` para registrar pedidos de alteração para aprovação de supervisores."
+        "no banco de dados: utilize `registrar_solicitacao_correcao` ou `registrar_intercorrencia` para registrar pedidos de alteração para aprovação de supervisores."
     ),
     SystemMessage(
         "Uma conversa, uma campanha: conversas podem ser apenas de dúvidas ou análises, sem nenhuma "

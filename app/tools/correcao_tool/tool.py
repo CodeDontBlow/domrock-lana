@@ -1,24 +1,147 @@
 import json
+import re
 import time
 from typing import Any
 
 from langchain_core.tools import tool
 
-from app.tools.correcao_tool.consulta import consultar_dados_funcionario_no_banco
 from app.tools.correcao_tool.dtos import (
+    TIPOS_CORRECAO,
     SolicitacaoCorrecao,
     SolicitacaoCorrecaoToolResult,
-    codigo_backend_tipo,
-    normalizar_tipo,
-)
-from app.tools.correcao_tool.gerador_sql import (
-    converter_competencia_para_data,
-    extrair_codigo_ou_valor,
-    gerar_sql_correcao,
 )
 from app.tools.dtos import calcular_tempo_ms
 
 NOME_TOOL_CORRECAO = "registrar_solicitacao_correcao"
+
+
+def normalizar_competencia(competencia: str) -> str:
+    """Normaliza competência para o formato yyyy-MM.
+
+    Aceita MM/yyyy ou yyyy-MM.
+    Ex.: normalizar_competencia("10/2025") -> "2025-10"
+    """
+    comp = competencia.strip()
+    m_mm_yyyy = re.match(r"^(\d{1,2})/(\d{4})$", comp)
+    if m_mm_yyyy:
+        return f"{m_mm_yyyy.group(2)}-{int(m_mm_yyyy.group(1)):02d}"
+    m_yyyy_mm = re.match(r"^(\d{4})-(\d{1,2})(?:-\d{1,2})?$", comp)
+    if m_yyyy_mm:
+        return f"{m_yyyy_mm.group(1)}-{int(m_yyyy_mm.group(2)):02d}"
+    raise ValueError(f"Competência inválida {competencia!r}, esperado formato MM/yyyy ou yyyy-MM")
+
+
+def montar_retorno_erro_correcao(mensagem: str, inicio: float) -> tuple[str, dict[str, Any]]:
+    """Monta retorno padronizado de erro da ferramenta de correção cadastral.
+
+    Ex.: montar_retorno_erro_correcao("Tipo inválido", time.perf_counter())
+    """
+    res = SolicitacaoCorrecaoToolResult(
+        situacao=mensagem, tempo=calcular_tempo_ms(inicio), competencias=[],
+        filtros=None, tabelas=None, registros=None, sql=None, solicitacao={},
+    )
+    return json.dumps(res.model_dump(mode="json"), ensure_ascii=False), {}
+
+
+def validar_tipo_correcao(tipo_limpo: str, tipo_original: str) -> str | None:
+    """Valida se o tipo de correção é suportado pelo contrato pontual.
+
+    Ex.: validar_tipo_correcao("INVALIDO", "invalido")
+    """
+    if tipo_limpo not in TIPOS_CORRECAO:
+        tipos_validos = ", ".join(TIPOS_CORRECAO.keys())
+        return (
+            f"Tipo de correção '{tipo_original}' não é uma correção pontual suportada. "
+            f"Tipos suportados: {tipos_validos}. "
+            "Alterações de percentuais ou regras de comissionamento devem ser registradas via registrar_parametros_regra."
+        )
+    return None
+
+
+def validar_competencia_correcao(competencia: str) -> tuple[str | None, str | None]:
+    """Valida e normaliza a competência informada.
+
+    Retorna tupla (competencia_normalizada, mensagem_de_erro).
+    Ex.: validar_competencia_correcao("10/2025") -> ("2025-10", None)
+    """
+    try:
+        return normalizar_competencia(competencia), None
+    except ValueError as e:
+        return None, str(e)
+
+
+def formatar_rotulo_padrao_correcao(
+    tipo_limpo: str, tipo_rotulo: str, matricula: str, valor: str
+) -> str:
+    """Gera o rótulo amigável padrão para o estado da correção cadastral.
+
+    Ex.: formatar_rotulo_padrao_correcao("TROCA_CARGO", "Troca de cargo", "MATRIC-1", "100")
+    """
+    mapa_rotulos = {
+        "TRANSFERENCIA_LOJA": f"{matricula} na loja {valor}",
+        "TROCA_CARGO": f"{matricula} no cargo {valor}",
+        "DATA_ADMISSAO": f"Data de admissão {valor}",
+        "DATA_DEMISSAO": f"Data de demissão {valor}",
+    }
+    return mapa_rotulos.get(tipo_limpo, f"{tipo_rotulo}: {valor}")
+
+
+def resolver_rotulos_correcao(
+    tipo_limpo: str, tipo_rotulo: str, matricula: str, val_antes: str | None, val_depois: str,
+    antes_rotulo: str | None, depois_rotulo: str | None,
+) -> tuple[str | None, str]:
+    """Resolve os rótulos anterior e posterior, usando padrões caso não tenham sido passados.
+
+    Ex.: resolver_rotulos_correcao(...)
+    """
+    # Rótulos amigáveis padrão caso não tenham sido passados
+    rot_dep = (depois_rotulo or "").strip() or formatar_rotulo_padrao_correcao(
+        tipo_limpo, tipo_rotulo, matricula, val_depois
+    )
+    rot_ant = (antes_rotulo or "").strip()
+    if not rot_ant and val_antes is not None:
+        rot_ant = formatar_rotulo_padrao_correcao(tipo_limpo, tipo_rotulo, matricula, val_antes)
+    return (rot_ant or None), rot_dep
+
+
+def normalizar_motivo_correcao(motivo: str | None, tipo_rotulo: str, matricula: str) -> str:
+    """Retorna motivo informado ou padrão quando omitido.
+
+    Ex.: normalizar_motivo_correcao(None, "Troca de cargo", "MATRIC-1") -> "Troca de cargo de MATRIC-1"
+    """
+    motivo_limpo = (motivo or "").strip()
+    if not motivo_limpo:
+        return f"{tipo_rotulo} de {matricula}"
+    return motivo_limpo
+
+
+def criar_solicitacao_correcao(
+    tipo: str, rotulo: str, matricula: str, competencia: str, antes: str | None,
+    depois: str, antes_rotulo: str | None, depois_rotulo: str, motivo: str,
+) -> dict[str, Any]:
+    """Instancia a SolicitacaoCorrecao e devolve dicionário serializável.
+
+    Ex.: criar_solicitacao_correcao(...)
+    """
+    return SolicitacaoCorrecao(
+        categoria="CORRECAO", tipo=tipo, tipo_rotulo=rotulo, matricula=matricula,
+        competencia=competencia, antes=antes, depois=depois,
+        antes_rotulo=antes_rotulo, depois_rotulo=depois_rotulo, motivo=motivo,
+    ).model_dump(mode="json")
+
+
+def montar_sucesso_correcao(
+    contrato: dict[str, Any], filtros: dict[str, Any], competencia: str, inicio: float
+) -> tuple[str, dict[str, Any]]:
+    """Monta tupla de retorno de sucesso com JSON e artifact.
+
+    Ex.: montar_sucesso_correcao(contrato, filtros, "2025-10", time.perf_counter())
+    """
+    resultado = SolicitacaoCorrecaoToolResult(
+        situacao="ok", tempo=calcular_tempo_ms(inicio), tabelas=[], competencias=[competencia],
+        filtros=filtros, sql=None, solicitacao=contrato,
+    )
+    return json.dumps(resultado.model_dump(mode="json"), ensure_ascii=False), contrato
 
 
 @tool(NOME_TOOL_CORRECAO, response_format="content_and_artifact")
@@ -26,154 +149,51 @@ def registrar_solicitacao_correcao(
     tipo: str,
     matricula: str,
     competencia: str,
-    antes: str,
     depois: str,
+    antes: str | None = None,
+    antes_rotulo: str | None = None,
+    depois_rotulo: str | None = None,
     motivo: str | None = None,
-    sql: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    """Registra uma solicitação de correção/alteração na base de dados para o painel HITL (Human-In-The-Loop).
+    """Registra uma solicitação de correção pontual na base de dados para o painel HITL.
 
-    Use SOMENTE quando o usuário solicitar alteração cadastral ou correção na base de dados,
+    Use SOMENTE quando o usuário solicitar correção cadastral pontual na base de dados
+    (um dos 4 tipos: TRANSFERENCIA_LOJA, TROCA_CARGO, DATA_ADMISSAO, DATA_DEMISSAO)
     e após confirmar na base (via `consultar_banco`) que a matrícula existe e que os dados atuais
-    daquela competência foram checados. Se os dados que você checar não coincidirem com o banco, avise o usuário e
-    NÃO abra solicitação.
+    daquela competência foram checados.
+    Os códigos de `antes` e `depois` DEVEM vir do resultado do `consultar_banco` (ex.: cod_loja, cod_cargo, datas).
+    Pergunte a competência e o motivo se faltarem, NUNCA assuma.
+    Se o dado não bater com a base, avise o valor atual e NÃO chame a ferramenta.
+    O pedido só vale depois que um Supervisor aprovar e o usuário precisa clicar em Confirmar no cartão.
     NUNCA use esta ferramenta para regras de campanhas de comissionamento (use registrar_parametros_regra).
 
-    FLUXO HITL (Human-In-The-Loop) E REFINAMENTO:
-    - Esta ferramenta NÃO executa o SQL no banco. Ela gera uma proposta de solicitação que é exibida
-      no componente HITL no final da sua mensagem. A solicitação NÃO é enviada imediatamente aos supervisores: ela permanece
-      aguardando o usuário revisar e clicar no botão para enviar.
-    - Se o usuário pedir para alterar qualquer parâmetro da solicitação pelo chat (ex: 'mude a loja para 8',
-      'troque o motivo', 'mude para outubro'), chame esta ferramenta NOVAMENTE com TODOS os parâmetros conhecidos,
-      atualizando apenas o que o usuário pediu para mudar. O componente HITL no chat será atualizado com os novos valores.
-
-    PADRÃO DE FORMATAÇÃO DE 'antes' E 'depois':
-    - AMBOS os campos DEVEM INCLUIR A MATRÍCULA do funcionário e possuir comprimento textual similar/simétrico
-      para que a comparação visual fique balanceada e legível no painel.
-    - Exemplos recomendados:
-        * Transferência de loja: antes="MATRIC-38 na loja 5", depois="MATRIC-38 na loja 8"
-        * Mudança de cargo: antes="MATRIC-10 como Vendedor", depois="MATRIC-10 como Gerente"
-        * Correção de vendas: antes="MATRIC-12 com R$ 1.000,00", depois="MATRIC-12 com R$ 1.500,00"
-        * Datas/vigência: antes="MATRIC-302 em 09/2025", depois="MATRIC-302 em 10/2025"
-
     Args:
-        tipo: Tipo da alteração com nome amigável (ex.: "Transferência de loja", "Mudança de cargo",
-            "Data de demissão", "Data de admissão", "Correção de venda", "Exclusão", "Atualização").
+        tipo: Código da alteração: TRANSFERENCIA_LOJA, TROCA_CARGO, DATA_ADMISSAO ou DATA_DEMISSAO.
         matricula: Matrícula do funcionário afetado (ex.: "MATRIC-38").
-        competencia: Mês/ano da competência afetada no formato MM/yyyy (ex.: "10/2025" ou "11/2025").
-        antes: Estado anterior incluindo a matrícula do funcionário (ex.: "MATRIC-38 na loja 5").
-        depois: Estado novo solicitado incluindo a matrícula com comprimento similar ao 'antes' (ex.: "MATRIC-38 na loja 8").
-        motivo: Motivo ou justificativa da alteração. Faça o motivo conter o máximo de informaçõe possíveis
-        com o mínimo de linhas.
-        sql: Código SQL de alteração gerado para avaliação dos supervisores.
+        competencia: Mês/ano da competência afetada no formato MM/yyyy ou yyyy-MM (ex.: "10/2025" ou "2025-10").
+        depois: Código ou data nova solicitada vinda da base (ex.: "8", "150", "2025-10-01").
+        antes: Código ou data anterior confirmada na base ou None (ex.: "33", "100", None).
+        antes_rotulo: Rótulo amigável para exibição do estado anterior (ex.: "MATRIC-38 na loja 33").
+        depois_rotulo: Rótulo amigável para exibição do novo estado (ex.: "MATRIC-38 na loja 8").
+        motivo: Justificativa da alteração. Pergunte ao usuário se faltar.
     """
     inicio = time.perf_counter()
-    try:
-        valor_antes = (antes or "").strip()
-        cod_antes = extrair_codigo_ou_valor(valor_antes or antes)
-        cod_depois = extrair_codigo_ou_valor(depois)
+    tipo_l = (tipo or "").strip().upper()
+    mat_l = (matricula or "").strip().upper()
 
-        if matricula:
-            try:
-                dados_consulta = consultar_dados_funcionario_no_banco(matricula, competencia)
-                registros = dados_consulta.get("dados") or []
-                if registros and isinstance(registros, list) and len(registros) > 0:
-                    item = registros[0]
-                    if not valor_antes:
-                        if "cod_loja" in item:
-                            valor_antes = f"loja {item['cod_loja']}"
-                            cod_antes = str(item["cod_loja"])
-                        elif "descr_loja" in item:
-                            valor_antes = str(item["descr_loja"])
-                            cod_antes = extrair_codigo_ou_valor(valor_antes)
-                        elif "cod_cargo" in item:
-                            valor_antes = f"cargo {item['cod_cargo']}"
-                            cod_antes = str(item["cod_cargo"])
-                        elif "descr_cargo" in item:
-                            valor_antes = str(item["descr_cargo"])
-                            cod_antes = extrair_codigo_ou_valor(valor_antes)
-                    else:
-                        # Proteção contra confusão de ID surrogate do banco vs cod_loja de negócio
-                        loja_id_banco = str(item.get("loja_id") or item.get("id") or "")
-                        cod_loja_banco = str(item.get("cod_loja") or "")
-                        if cod_loja_banco and cod_antes == loja_id_banco and cod_antes != cod_loja_banco:
-                            cod_antes = cod_loja_banco
-                            if f"loja {loja_id_banco}" in valor_antes:
-                                valor_antes = valor_antes.replace(f"loja {loja_id_banco}", f"loja {cod_loja_banco}")
-                            elif loja_id_banco in valor_antes:
-                                valor_antes = valor_antes.replace(loja_id_banco, cod_loja_banco)
+    erro_tipo = validar_tipo_correcao(tipo_l, tipo)
+    if erro_tipo:
+        return montar_retorno_erro_correcao(erro_tipo, inicio)
 
-                        cargo_id_banco = str(item.get("cargo_id") or "")
-                        cod_cargo_banco = str(item.get("cod_cargo") or "")
-                        if cod_cargo_banco and cod_antes == cargo_id_banco and cod_antes != cod_cargo_banco:
-                            cod_antes = cod_cargo_banco
-                            if f"cargo {cargo_id_banco}" in valor_antes:
-                                valor_antes = valor_antes.replace(f"cargo {cargo_id_banco}", f"cargo {cod_cargo_banco}")
-                            elif cargo_id_banco in valor_antes:
-                                valor_antes = valor_antes.replace(cargo_id_banco, cod_cargo_banco)
-            except Exception:
-                pass
+    comp_norm, erro_comp = validar_competencia_correcao(competencia)
+    if erro_comp or not comp_norm:
+        return montar_retorno_erro_correcao(erro_comp or "Competência inválida", inicio)
 
-        sql_gerado, tabelas = gerar_sql_correcao(
-            tipo=tipo,
-            matricula=matricula,
-            competencia=competencia,
-            antes=valor_antes or antes,
-            depois=depois,
-            sql_customizado=sql,
-        )
-        _, comp_iso, comp_mm_yyyy = converter_competencia_para_data(competencia)
-        tipo_amigavel = normalizar_tipo(tipo)
-        tipo_codigo = codigo_backend_tipo(tipo)
-        matricula_limpa = matricula.strip().upper()
-
-        motivo_final = (motivo or "").strip()
-        if not motivo_final:
-            motivo_final = (
-                f"{tipo_amigavel} de {matricula_limpa}: alteração de "
-                f"{(valor_antes or antes).strip()} para {depois.strip()} em {comp_mm_yyyy}"
-            )
-
-        solicitacao = SolicitacaoCorrecao(
-            tipo=tipo_amigavel,
-            tipo_alteracao=tipo_codigo,
-            matricula=matricula_limpa,
-            competencia=comp_mm_yyyy,
-            competencia_iso=comp_iso,
-            antes=(valor_antes or antes).strip(),
-            depois=depois.strip(),
-            valor_antes=cod_antes,
-            valor_depois=cod_depois,
-            motivo=motivo_final,
-            origem="LANA",
-            status="PENDENTE_APROVACAO",
-            sql=sql_gerado,
-        )
-        contrato = solicitacao.model_dump(mode="json")
-        resultado = SolicitacaoCorrecaoToolResult(
-            situacao="ok",
-            tempo=calcular_tempo_ms(inicio),
-            tabelas=tabelas,
-            competencias=[comp_mm_yyyy],
-            filtros={
-                "matricula": matricula_limpa,
-                "competencia": comp_mm_yyyy,
-                "antes": (valor_antes or antes).strip(),
-                "depois": depois.strip(),
-            },
-            sql=sql_gerado,
-            solicitacao=contrato,
-        )
-        return json.dumps(resultado.model_dump(mode="json"), ensure_ascii=False), contrato
-    except Exception as e:
-        resultado = SolicitacaoCorrecaoToolResult(
-            situacao=f"erro ao registrar solicitação de correção: {e}",
-            tempo=calcular_tempo_ms(inicio),
-            competencias=[],
-            filtros=None,
-            tabelas=None,
-            registros=None,
-            sql=None,
-            solicitacao={},
-        )
-        return json.dumps(resultado.model_dump(mode="json"), ensure_ascii=False), {}
+    rotulo = TIPOS_CORRECAO[tipo_l]
+    val_ant = (antes.strip() if isinstance(antes, str) else str(antes)) if antes is not None else None
+    val_dep = depois.strip() if isinstance(depois, str) else str(depois)
+    rot_ant, rot_dep = resolver_rotulos_correcao(tipo_l, rotulo, mat_l, val_ant, val_dep, antes_rotulo, depois_rotulo)
+    motivo_final = normalizar_motivo_correcao(motivo, rotulo, mat_l)
+    solic = criar_solicitacao_correcao(tipo_l, rotulo, mat_l, comp_norm, val_ant, val_dep, rot_ant, rot_dep, motivo_final)
+    filtros = {"matricula": mat_l, "tipo": tipo_l, "competencia": comp_norm, "antes": val_ant, "depois": val_dep}
+    return montar_sucesso_correcao(solic, filtros, comp_norm, inicio)

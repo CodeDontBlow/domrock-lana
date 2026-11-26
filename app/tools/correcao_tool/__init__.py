@@ -1,8 +1,8 @@
 from app.tools.correcao_tool.consulta import consultar_dados_funcionario_no_banco
 from app.tools.correcao_tool.dtos import (
+    TIPOS_CORRECAO,
     SolicitacaoCorrecao,
     SolicitacaoCorrecaoToolResult,
-    TipoCorrecao,
 )
 from app.tools.correcao_tool.tool import NOME_TOOL_CORRECAO, registrar_solicitacao_correcao
 
@@ -12,5 +12,5 @@ __all__ = [
     "consultar_dados_funcionario_no_banco",
     "SolicitacaoCorrecao",
     "SolicitacaoCorrecaoToolResult",
-    "TipoCorrecao",
+    "TIPOS_CORRECAO",
 ]

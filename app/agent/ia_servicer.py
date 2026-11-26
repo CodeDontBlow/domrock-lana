@@ -6,13 +6,13 @@ from typing import Any
 
 import grpc
 
-from app.agent.router import limite_de_cota, tempo_esgotado, MENSAGEM_COTA, MENSAGEM_TEMPO
+from app.agent.guardrails import classificar_guardrail, obter_resposta_guardrail
+from app.agent.router import MENSAGEM_COTA, MENSAGEM_TEMPO, limite_de_cota, tempo_esgotado
 from app.agent.service import lana_invoke
 from app.proto import ia_service_pb2, ia_service_pb2_grpc
-from app.agent.guardrails import classificar_guardrail, obter_resposta_guardrail
 
-# Mesma assinatura de lana_invoke: (chat_id, mensagem, ficha do painel) -> turno do agente.
-InvocarAgente = Callable[[str, str, dict[str, Any] | None], dict[str, Any]]
+# Assinatura de lana_invoke: (chat_id, mensagem, regra, historico, solicitacao) -> turno do agente.
+InvocarAgente = Callable[..., dict[str, Any]]
 PAPEIS_VALIDOS = {"usuario", "lana", "sistema"}
 
 
@@ -42,12 +42,12 @@ class IAServiceServicer(ia_service_pb2_grpc.IAServiceServicer):
     async def _executar_agente(self, request) -> ia_service_pb2.InvokeResponse:
         regra = ler_regra(request.regra_json)
         historico = ler_historico(getattr(request, "historico_json", ""))
+        solicitacao = ler_solicitacao(getattr(request, "solicitacao_json", ""))
 
+        # Chamada direta, sem fallback por TypeError: um TypeError de dentro do agente faria o turno rodar de
+        # novo (mais chamadas ao LLM) e esconderia o erro real.
         def _chamar():
-            try:
-                return self._invocar(request.chat_id, request.prompt, regra, historico)
-            except TypeError:
-                return self._invocar(request.chat_id, request.prompt, regra)
+            return self._invocar(request.chat_id, request.prompt, regra, historico, solicitacao=solicitacao)
 
         resultado = await asyncio.wait_for(asyncio.to_thread(_chamar), timeout=100)
         return montar_resposta(resultado)
@@ -72,6 +72,26 @@ def ler_regra(regra_json: str) -> dict[str, Any] | None:
         return json.loads(regra_json)
     except json.JSONDecodeError as erro:
         raise ValueError(f"regra_json inválido, esperado o objeto JSON da ficha: {regra_json[:200]!r}") from erro
+
+
+def ler_solicitacao(solicitacao_json: str) -> dict[str, Any] | None:
+    """Rascunho de solicitação HITL do chat; vazio = sem solicitação existente.
+
+    Ex.: ler_solicitacao('{"tipo": "TRANSFERENCIA_LOJA"}')["tipo"] -> "TRANSFERENCIA_LOJA"
+    """
+    if not solicitacao_json:
+        return None
+    try:
+        dados = json.loads(solicitacao_json)
+    except json.JSONDecodeError as erro:
+        raise ValueError(
+            f"solicitacao_json inválido, esperado o objeto JSON da solicitação: {solicitacao_json[:200]!r}"
+        ) from erro
+    if not isinstance(dados, dict):
+        raise ValueError(
+            f"solicitacao_json inválido, esperado objeto JSON da solicitação; recebido {type(dados).__name__}: {solicitacao_json[:200]!r}"
+        )
+    return dados
 
 
 def validar_item_historico(item: Any) -> dict[str, Any]:
@@ -105,7 +125,7 @@ def ler_historico(historico_json: str) -> list[dict[str, Any]]:
 
 
 def montar_resposta(turno: dict[str, Any]) -> ia_service_pb2.InvokeResponse:
-    """Texto, eventos, ficha e trilha do turno. Viajam como JSON, porque o .proto os leva como string.
+    """Texto, eventos, ficha, trilha e solicitação do turno. Viajam como JSON, porque o .proto os leva como string.
 
     Ex.: montar_resposta({"response": "oi", "events": [], "regra": None, "trilha": None}).trilha_json -> ""
     """
@@ -116,9 +136,10 @@ def montar_resposta(turno: dict[str, Any]) -> ia_service_pb2.InvokeResponse:
         regra_json=_json_ou_vazio(turno.get("regra")),
         trilha_json=_json_ou_vazio(turno.get("trilha")),
         alertas_json=_json_ou_vazio(alertas) if alertas else "",
+        solicitacao_json=_json_ou_vazio(turno.get("solicitacao")),
     )
 
 
 def _json_ou_vazio(valor: dict[str, Any] | None) -> str:
-    # "" = não veio (contrato 3.3): turno sem ficha nova ou sem ferramenta.
+    # "" = não veio (contrato 3.3): turno sem ficha nova, sem solicitação ou sem ferramenta.
     return json.dumps(valor, ensure_ascii=False, default=str) if valor is not None else ""
