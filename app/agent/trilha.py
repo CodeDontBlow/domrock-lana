@@ -39,16 +39,11 @@ class TrilhaChat(BaseModel):
     premissas: list[str] = []
     passos: list[PassoTrilha]
     eventos: list[dict[str, Any]] = []
+    grounding: dict[str, Any] | None = None
 
 
-def montar_trilha_chat(messages: list[BaseMessage], modelo_padrao: str) -> dict[str, Any] | None:
-    """Trilha do turno, ou None quando a Lana respondeu sem usar ferramenta (contrato 2.2)."""
-    chamadas = [chamada for m in messages if isinstance(m, AIMessage) for chamada in m.tool_calls]
-    if not chamadas:
-        return None
-    retornos = {m.tool_call_id: m for m in messages if isinstance(m, ToolMessage)}
-    passos = [_passo(ordem, chamada, retornos.get(chamada["id"])) for ordem, chamada in enumerate(chamadas, start=1)]
-    eventos = [
+def _extrair_eventos_de_passos(passos: list[PassoTrilha]) -> list[dict[str, Any]]:
+    return [
         {
             "sql": p.sql_executado,
             "motivo": p.motivo or p.mensagem_erro,
@@ -58,8 +53,35 @@ def montar_trilha_chat(messages: list[BaseMessage], modelo_padrao: str) -> dict[
         for p in passos
         if p.status == "bloqueada" or (p.ferramenta == NOME_TOOL_CONSULTA and p.situacao == "ERRO" and p.motivo)
     ]
+
+
+def montar_trilha_chat(
+    messages: list[BaseMessage],
+    modelo_padrao: str,
+    grounding: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Trilha do turno, ou None quando a Lana respondeu sem usar ferramenta e sem grounding (contrato 2.2)."""
+    chamadas = [chamada for m in messages if isinstance(m, AIMessage) for chamada in m.tool_calls]
+    if not chamadas and grounding is None:
+        return None
+    retornos = {m.tool_call_id: m for m in messages if isinstance(m, ToolMessage)}
+    passos = [_passo(ordem, c, retornos.get(c["id"])) for ordem, c in enumerate(chamadas, start=1)]
     return TrilhaChat(
-        modelo=_modelo_usado(messages, modelo_padrao), passos=passos, eventos=eventos
+        modelo=_modelo_usado(messages, modelo_padrao),
+        passos=passos,
+        eventos=_extrair_eventos_de_passos(passos),
+        grounding=grounding,
+    ).model_dump(mode="json")
+
+
+
+def montar_trilha_fora_do_escopo(grounding: dict[str, Any]) -> dict[str, Any]:
+    """Trilha simplificada de bloqueio pelo guardrail de escopo antes do grafo (A6-128)."""
+    return TrilhaChat(
+        modelo="nenhum (guardrail)",
+        passos=[],
+        eventos=[],
+        grounding=grounding,
     ).model_dump(mode="json")
 
 

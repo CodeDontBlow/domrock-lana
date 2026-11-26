@@ -161,3 +161,28 @@ def test_le_retorno_com_decimal_e_aspas_simples() -> None:
 def test_filtros_viram_texto() -> None:
     assert texto_dos_filtros({"marcas": ["10", "30"], "cargos": None, "periodo": "nov"}) == "marcas: 10, 30; periodo: nov"
     assert texto_dos_filtros("") is None
+
+
+def test_trilha_com_grounding_sem_ferramentas_nao_e_none() -> None:
+    from app.agent.trilha import montar_trilha_chat
+    turno = [HumanMessage("Como funciona a admissão?"), AIMessage("Calculado proporcionalmente.")]
+    grounding = {"situacao": "no_escopo", "item": "5c", "distancia": 0.35, "limiar": 0.50}
+    trilha = montar_trilha_chat(turno, "modelo-padrao", grounding=grounding)
+    assert trilha is not None
+    assert trilha["grounding"] == grounding
+    assert trilha["passos"] == []
+
+
+def test_trilha_fora_do_escopo_registra_situacao_distancia_e_limiar() -> None:
+    from app.agent.trilha import montar_trilha_fora_do_escopo
+    grounding = {"situacao": "fora_do_escopo", "item": "5c", "distancia": 0.62, "limiar": 0.50}
+    trilha = montar_trilha_fora_do_escopo(grounding)
+    assert trilha["modelo"] == "nenhum (guardrail)"
+    assert trilha["passos"] == []
+    g = trilha["grounding"]
+    assert (g["situacao"], g["distancia"], g["limiar"]) == ("fora_do_escopo", 0.62, 0.50)
+
+
+def test_sem_ferramenta_e_sem_grounding_continua_none() -> None:
+    turno = [HumanMessage("olá"), AIMessage("Olá! Como posso ajudar?")]
+    assert montar_trilha_chat(turno, "modelo-padrao", grounding=None) is None

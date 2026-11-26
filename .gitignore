@@ -224,3 +224,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ChromaDB e modelos RAG (A6-128)
+data/chroma/
+data/modelos/

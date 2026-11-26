@@ -1,5 +1,6 @@
 import ast
 import json
+import logging
 import re
 import threading
 from typing import Any
@@ -9,9 +10,21 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from app.agent.fonte_dos_valores import conferir_fonte_dos_valores
 from app.agent.graph import lana
 from app.agent.prompts import SYSTEM_RULES
-from app.agent.trilha import montar_trilha_chat
+from app.agent.trilha import montar_trilha_chat, montar_trilha_fora_do_escopo
 from app.core.config import extract_text, get_settings
+from app.rag.base_vetorial import BaseConhecimento, TrechoEncontrado, obter_base_conhecimento
+from app.rag.grounding import (
+    MENSAGEM_FORA_DO_ESCOPO,
+    ConfigRag,
+    ResultadoGrounding,
+    _grounding_sem_busca,
+    avaliar_grounding,
+    contexto_documental,
+    texto_de_busca,
+)
 from app.tools.regra_tool.tool import NOME_TOOL_REGRA
+
+logger = logging.getLogger(__name__)
 
 def _parse_tool_content(conteudo: Any) -> Any:
     """Desserializa o retorno da ferramenta, suportando JSON e representações Python com Decimal."""
@@ -162,8 +175,10 @@ def _mensagens_de_entrada(
     user_input: str,
     regra: dict[str, Any] | None,
     historico_mensagens: list[BaseMessage],
+    achados: list[TrechoEncontrado] | None = None,
 ) -> list[BaseMessage]:
-    mensagem_atual = HumanMessage(content=contexto_do_painel(regra) + user_input)
+    conteudo_contexto = contexto_do_painel(regra) + contexto_documental(achados or [])
+    mensagem_atual = HumanMessage(content=conteudo_contexto + user_input)
     return [*SYSTEM_RULES, *historico_mensagens, mensagem_atual]
 
 
@@ -177,15 +192,32 @@ def _trava_do_chat(thread_id: str) -> threading.Lock:
         return _travas_por_chat.setdefault(thread_id, threading.Lock())
 
 
+def _obter_base_ou_nada() -> BaseConhecimento | None:
+    """Obtém singleton da base vetorial capturando exceções com log JSON (A6-128)."""
+    try:
+        return obter_base_conhecimento()
+    except Exception as exc:
+        logger.warning(
+            json.dumps({"evento": "rag_indisponivel", "erro": str(exc)}, ensure_ascii=False)
+        )
+        return None
+
+
 # Função para invocar o grafo via requisição HTTP
 def lana_invoke(
     thread_id: str,
     user_input: str,
     regra: dict[str, Any] | None = None,
     historico: list[dict[str, Any]] | None = None,
-):
+    base: BaseConhecimento | None = None,
+    config_rag: ConfigRag | None = None,
+) -> dict[str, Any]:
     with _trava_do_chat(thread_id):
-        return _invocar_turno(thread_id, user_input, regra, historico)
+        config = config_rag or ConfigRag.do_settings()
+        base_ativa = base or (_obter_base_ou_nada() if config.ativo else None)
+        return _invocar_turno(
+            thread_id, user_input, regra, historico, base=base_ativa, config=config
+        )
 
 
 def _executar_grafo(entrada: list[BaseMessage]) -> list[BaseMessage]:
@@ -229,23 +261,61 @@ def extrair_alertas(trilha: dict[str, Any] | None) -> list[dict[str, Any]]:
     return alertas
 
 
+def _aplicar_grounding(
+    user_input: str,
+    historico_mensagens: list[BaseMessage],
+    base: BaseConhecimento | None,
+    config: ConfigRag,
+) -> tuple[ResultadoGrounding, list[TrechoEncontrado]]:
+    if not config.ativo:
+        return _grounding_sem_busca("desligado", config.limiar), []
+    if base is None:
+        return _grounding_sem_busca("indisponivel", config.limiar), []
+    try:
+        consulta = texto_de_busca(user_input, historico_mensagens)
+        achados = base.buscar(consulta, k=config.top_k)
+        return avaliar_grounding(achados, limiar=config.limiar), achados
+    except Exception as exc:
+        logger.warning(
+            json.dumps({"evento": "rag_indisponivel", "erro": str(exc)}, ensure_ascii=False)
+        )
+        return _grounding_sem_busca("indisponivel", config.limiar), []
+
+
+def _resposta_fora_do_escopo(
+    thread_id: str,
+    grounding: ResultadoGrounding,
+) -> dict[str, Any]:
+    dados_grounding = grounding.model_dump(mode="json")
+    trilha = montar_trilha_fora_do_escopo(dados_grounding)
+    return {
+        "chat_id": thread_id,
+        "response": MENSAGEM_FORA_DO_ESCOPO,
+        "events": [],
+        "regra": None,
+        "trilha": trilha,
+        "alertas": [],
+    }
+
+
 def _montar_resultado_turno(
-    thread_id: str, messages: list[BaseMessage], user_input: str,
-    regra: dict[str, Any] | None, historico_mensagens: list[BaseMessage],
+    thread_id: str,
+    messages: list[BaseMessage],
+    user_input: str,
+    regra: dict[str, Any] | None,
+    historico_mensagens: list[BaseMessage],
     historico: list[dict[str, Any]] | None,
+    grounding: ResultadoGrounding | None = None,
 ) -> dict[str, Any]:
     regra_do_turno = extrair_regra(messages)
-    trilha = montar_trilha_chat(messages, get_settings().AI_MODEL)
+    dados_g = grounding.model_dump(mode="json") if grounding else None
+    trilha = montar_trilha_chat(messages, get_settings().AI_MODEL, grounding=dados_g)
     resposta = _conferir_resposta_do_turno(
         messages[-1], user_input, regra, regra_do_turno, trilha, historico_mensagens, historico
     )
     return {
-        "chat_id": thread_id,
-        "response": resposta,
-        "events": get_events(messages),
-        "regra": regra_do_turno,
-        "trilha": trilha,
-        "alertas": extrair_alertas(trilha),
+        "chat_id": thread_id, "response": resposta, "events": get_events(messages),
+        "regra": regra_do_turno, "trilha": trilha, "alertas": extrair_alertas(trilha),
     }
 
 
@@ -254,10 +324,17 @@ def _invocar_turno(
     user_input: str,
     regra: dict[str, Any] | None,
     historico: list[dict[str, Any]] | None = None,
+    base: BaseConhecimento | None = None,
+    config: ConfigRag | None = None,
 ) -> dict[str, Any]:
-    historico_mensagens = _converter_historico(historico)
-    entrada = _mensagens_de_entrada(user_input, regra, historico_mensagens)
+    configuracao = config or ConfigRag.do_settings()
+    hist_msgs = _converter_historico(historico)
+    grounding, achados = _aplicar_grounding(user_input, hist_msgs, base, configuracao)
+    if grounding.situacao == "fora_do_escopo":
+        return _resposta_fora_do_escopo(thread_id, grounding)
+
+    entrada = _mensagens_de_entrada(user_input, regra, hist_msgs, achados)
     messages = _executar_grafo(entrada)
     return _montar_resultado_turno(
-        thread_id, messages, user_input, regra, historico_mensagens, historico
+        thread_id, messages, user_input, regra, hist_msgs, historico, grounding
     )
