@@ -4,6 +4,7 @@ from typing import Any
 
 from langchain_core.tools import tool
 
+from app.tools.intercorrencia_tool.conferencia import BuscarMatricula, conferir_matricula, matricula_existe
 from app.tools.dtos import calcular_tempo_ms
 from app.tools.intercorrencia_tool.dtos import (
     TIPOS_INTERCORRENCIA,
@@ -12,6 +13,9 @@ from app.tools.intercorrencia_tool.dtos import (
 )
 
 NOME_TOOL_INTERCORRENCIA = "registrar_intercorrencia"
+
+# A @tool não aceita dependência injetada (o LLM veria o parâmetro); os testes trocam esta busca por um fake.
+buscar_matricula_na_base: BuscarMatricula = matricula_existe
 
 
 def formatar_data_br(data_iso: str) -> str:
@@ -183,8 +187,8 @@ def registrar_intercorrencia(
 ) -> tuple[str, dict[str, Any]]:
     """Registra uma solicitação de intercorrência de RH para o painel HITL.
 
-    Use SOMENTE após confirmar na base (via `consultar_banco`) que a matrícula existe.
-    Se a matrícula não existir ou não bater com o banco, avise o usuário e NÃO abra a solicitação.
+    Chame direto, sem `consultar_banco` antes: a ferramenta confere se a matrícula existe na base.
+    Se ela devolver que a matrícula não existe, avise o usuário e NÃO abra a solicitação.
     O pedido só vale depois que outra pessoa aprovar na fila de aprovações.
 
     Args:
@@ -204,6 +208,7 @@ def registrar_intercorrencia(
     loja = str(cod_loja).strip() if cod_loja is not None and str(cod_loja).strip() else None
 
     erro = validar_regras_intercorrencia(tipo_l, tipo, motivo_l, d_ini, data_inicio, d_fim, loja)
+    erro = erro or conferir_matricula(mat_l, buscar=buscar_matricula_na_base)
     if erro:
         return montar_retorno_erro_intercorrencia(erro, inicio)
 

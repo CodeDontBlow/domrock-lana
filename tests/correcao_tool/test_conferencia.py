@@ -5,7 +5,7 @@ import pytest
 from langchain_core.messages import ToolMessage
 
 from app.tools.correcao_tool import tool
-from app.tools.correcao_tool.conferencia import SQL_VALOR_ATUAL, conferir_antes_na_base
+from app.tools.correcao_tool.conferencia import SQL_VALOR_ATUAL, resolver_antes
 
 
 class BaseFalsa:
@@ -27,27 +27,27 @@ class BaseQueFalha:
 
 def test_antes_igual_a_base_confere() -> None:
     base = BaseFalsa(["33"])
-    assert conferir_antes_na_base("TRANSFERENCIA_LOJA", "MATRIC-38", "2025-10", "33", buscar=base) is None
+    assert resolver_antes("TRANSFERENCIA_LOJA", "MATRIC-38", "2025-10", "33", buscar=base)[1] is None
     assert base.consultas == [("TRANSFERENCIA_LOJA", "MATRIC-38", "2025-10")]
 
 
 def test_antes_diferente_da_base_devolve_o_valor_atual() -> None:
-    erro = conferir_antes_na_base("TRANSFERENCIA_LOJA", "MATRIC-38", "2025-10", "75", buscar=BaseFalsa(["33"]))
+    erro = resolver_antes("TRANSFERENCIA_LOJA", "MATRIC-38", "2025-10", "75", buscar=BaseFalsa(["33"]))[1]
     assert erro is not None
     assert "(75)" in erro and "é 33" in erro and "antes='33'" in erro
 
 
 def test_matricula_sem_registro_na_competencia() -> None:
-    erro = conferir_antes_na_base("TROCA_CARGO", "MATRIC-999", "2025-10", "100", buscar=BaseFalsa([]))
+    erro = resolver_antes("TROCA_CARGO", "MATRIC-999", "2025-10", "100", buscar=BaseFalsa([]))[1]
     assert erro is not None and "não tem registro" in erro
 
 
 def test_demissao_sem_data_atual_confere_com_antes_vazio() -> None:
-    assert conferir_antes_na_base("DATA_DEMISSAO", "MATRIC-38", "2025-10", None, buscar=BaseFalsa([None])) is None
+    assert resolver_antes("DATA_DEMISSAO", "MATRIC-38", "2025-10", None, buscar=BaseFalsa([None]))[1] is None
 
 
 def test_banco_fora_do_ar_nao_bloqueia() -> None:
-    assert conferir_antes_na_base("TRANSFERENCIA_LOJA", "MATRIC-38", "2025-10", "33", buscar=BaseQueFalha()) is None
+    assert resolver_antes("TRANSFERENCIA_LOJA", "MATRIC-38", "2025-10", "33", buscar=BaseQueFalha())[1] is None
 
 
 @pytest.mark.parametrize("tipo", ["TRANSFERENCIA_LOJA", "TROCA_CARGO", "DATA_ADMISSAO", "DATA_DEMISSAO"])
@@ -64,3 +64,22 @@ def test_ferramenta_recusa_cartao_com_antes_errado(monkeypatch: pytest.MonkeyPat
     })
     assert mensagem.artifact == {}
     assert "não confere com a base" in json.loads(mensagem.content)["situacao"]
+
+
+def test_sem_antes_usa_o_valor_unico_da_base() -> None:
+    assert resolver_antes("TRANSFERENCIA_LOJA", "MATRIC-38", "2025-10", None, buscar=BaseFalsa(["33"])) == ("33", None)
+
+
+def test_sem_antes_e_varios_valores_na_base_pede_conferencia() -> None:
+    antes, erro = resolver_antes("TRANSFERENCIA_LOJA", "MATRIC-38", "2025-10", None, buscar=BaseFalsa(["33", "8"]))
+    assert antes is None and erro is not None and "33, 8" in erro
+
+
+def test_ferramenta_preenche_o_antes_vazio_com_a_base(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tool, "buscar_valores_na_base", BaseFalsa(["33"]))
+    mensagem: ToolMessage = tool.registrar_solicitacao_correcao.invoke({
+        "name": tool.NOME_TOOL_CORRECAO, "id": "call-2", "type": "tool_call",
+        "args": {"tipo": "TRANSFERENCIA_LOJA", "matricula": "MATRIC-38", "competencia": "2025-10",
+                 "depois": "8", "motivo": "Transferência a pedido da regional"},
+    })
+    assert mensagem.artifact["antes"] == "33"

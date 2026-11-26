@@ -16,8 +16,17 @@ class BaseIndisponivel:
         raise ConnectionError(f"sem banco nos testes: {tipo} {matricula} {competencia}")
 
 
+class MatriculaIndisponivel:
+    """Fake da busca da matrícula: sem banco nos testes, a conferência é pulada."""
+
+    def __call__(self, matricula: str) -> bool:
+        raise ConnectionError(f"sem banco nos testes: {matricula}")
+
+
 @pytest.fixture(autouse=True)
 def _sem_banco_na_conferencia_do_antes(monkeypatch: pytest.MonkeyPatch) -> None:
-    from app.tools.correcao_tool import tool
+    from app.tools.correcao_tool import tool as correcao
+    from app.tools.intercorrencia_tool import tool as intercorrencia
 
-    monkeypatch.setattr(tool, "buscar_valores_na_base", BaseIndisponivel())
+    monkeypatch.setattr(correcao, "buscar_valores_na_base", BaseIndisponivel())
+    monkeypatch.setattr(intercorrencia, "buscar_matricula_na_base", MatriculaIndisponivel())

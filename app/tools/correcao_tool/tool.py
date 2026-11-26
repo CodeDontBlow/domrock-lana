@@ -8,7 +8,7 @@ from langchain_core.tools import tool
 from app.tools.correcao_tool.conferencia import (
     BuscarValoresAtuais,
     buscar_valores_atuais,
-    conferir_antes_na_base,
+    resolver_antes,
 )
 from app.tools.correcao_tool.dtos import (
     TIPOS_CORRECAO,
@@ -167,11 +167,12 @@ def registrar_solicitacao_correcao(
 
     Use SOMENTE quando o usuário solicitar correção cadastral pontual na base de dados
     (um dos 4 tipos: TRANSFERENCIA_LOJA, TROCA_CARGO, DATA_ADMISSAO, DATA_DEMISSAO)
-    e após confirmar na base (via `consultar_banco`) que a matrícula existe e que os dados atuais
-    daquela competência foram checados.
-    Os códigos de `antes` e `depois` DEVEM vir do resultado do `consultar_banco` (ex.: cod_loja, cod_cargo, datas).
+    Chame direto, sem `consultar_banco` antes: a ferramenta confere a matrícula e o valor atual na base.
+    Em `antes`, passe o valor que o usuário disse (código da loja/cargo ou data), ou deixe vazio se ele não disse:
+    vazio, a ferramenta usa o valor atual da base.
+    Se a ferramenta devolver que o `antes` não confere e o usuário tinha afirmado outro valor, avise o valor atual
+    e NÃO abra o pedido.
     Pergunte a competência e o motivo se faltarem, NUNCA assuma.
-    Se o dado não bater com a base, avise o valor atual e NÃO chame a ferramenta.
     O pedido só vale depois que um Supervisor aprovar e o usuário precisa clicar em Confirmar no cartão.
     NUNCA use esta ferramenta para regras de campanhas de comissionamento (use registrar_parametros_regra).
 
@@ -200,7 +201,7 @@ def registrar_solicitacao_correcao(
     rotulo = TIPOS_CORRECAO[tipo_l]
     val_ant = (antes.strip() if isinstance(antes, str) else str(antes)) if antes is not None else None
     val_dep = depois.strip() if isinstance(depois, str) else str(depois)
-    erro_antes = conferir_antes_na_base(tipo_l, mat_l, comp_norm, val_ant, buscar=buscar_valores_na_base)
+    val_ant, erro_antes = resolver_antes(tipo_l, mat_l, comp_norm, val_ant, buscar=buscar_valores_na_base)
     if erro_antes:
         return montar_retorno_erro_correcao(erro_antes, inicio)
     rot_ant, rot_dep = resolver_rotulos_correcao(tipo_l, rotulo, mat_l, val_ant, val_dep, antes_rotulo, depois_rotulo)
